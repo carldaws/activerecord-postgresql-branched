@@ -55,6 +55,18 @@ class SchemaDumperTest < Minitest::Test
     refute_includes output, "branch_"
   end
 
+  def test_dump_on_primary_branch_is_standard
+    conn = connect(branch_override: "main")
+
+    conn.execute("CREATE TABLE public.products (id serial PRIMARY KEY, title varchar)")
+
+    output = dump_schema(conn)
+
+    assert_includes output, "products"
+    refute_includes output, "branch_"
+    refute_includes output, "create_schema"
+  end
+
   private
 
   def dump_schema(conn)

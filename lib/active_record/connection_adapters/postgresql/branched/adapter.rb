@@ -23,26 +23,25 @@ module ActiveRecord
             bulk_change_table
           ].freeze
 
-          def configure_connection
+          def initialize(...)
             super
             @branch_manager = BranchManager.new(self, @config)
+            @shadow = Shadow.new(self, @branch_manager.branch_schema) unless @branch_manager.primary_branch?
+          end
+
+          def configure_connection
+            super
             @branch_manager.activate
           end
 
           SHADOW_BEFORE.each do |method|
             define_method(method) do |table_name, *args, **kwargs, &block|
-              shadow.call(table_name)
+              @shadow&.call(table_name)
               super(table_name, *args, **kwargs, &block)
             end
           end
 
           attr_reader :branch_manager
-
-          private
-
-          def shadow
-            Shadow.new(self, @branch_manager)
-          end
         end
       end
     end

@@ -3,14 +3,12 @@ module ActiveRecord
     module PostgreSQL
       module Branched
         class Shadow
-          def initialize(connection, branch_manager)
+          def initialize(connection, branch_schema)
             @connection = connection
-            @branch_manager = branch_manager
+            @branch_schema = branch_schema
           end
 
           def call(table_name)
-            return if @branch_manager.primary_branch?
-
             table = table_name.to_s
             return unless exists_in_public?(table)
             return if already_shadowed?(table)
@@ -30,20 +28,19 @@ module ActiveRecord
           def already_shadowed?(table)
             @connection.select_value(<<~SQL) == 1
               SELECT 1 FROM information_schema.tables
-              WHERE table_schema = #{@connection.quote(@branch_manager.schema)}
+              WHERE table_schema = #{@connection.quote(@branch_schema)}
                 AND table_name = #{@connection.quote(table)}
             SQL
           end
 
           def create_shadow(table)
-            schema = @branch_manager.schema
             quoted_table = @connection.quote_column_name(table)
             @connection.execute(<<~SQL)
-              CREATE TABLE #{schema}.#{quoted_table}
+              CREATE TABLE #{@branch_schema}.#{quoted_table}
                 (LIKE public.#{quoted_table} INCLUDING ALL)
             SQL
             @connection.execute(<<~SQL)
-              INSERT INTO #{schema}.#{quoted_table}
+              INSERT INTO #{@branch_schema}.#{quoted_table}
                 SELECT * FROM public.#{quoted_table}
             SQL
           end

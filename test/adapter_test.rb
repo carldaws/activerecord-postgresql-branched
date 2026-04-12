@@ -97,4 +97,25 @@ class AdapterTest < Minitest::Test
     public_versions = branch_conn.select_values("SELECT version FROM public.schema_migrations ORDER BY version")
     assert_equal %w[20260101000000], public_versions
   end
+
+  def test_ar_internal_metadata_isolated_per_branch
+    main_conn = connect(branch_override: "main")
+    main_conn.execute(<<~SQL)
+      CREATE TABLE public.ar_internal_metadata (key varchar NOT NULL PRIMARY KEY, value varchar)
+    SQL
+    main_conn.execute("INSERT INTO public.ar_internal_metadata (key, value) VALUES ('environment', 'development')")
+    ActiveRecord::Base.connection_pool.disconnect!
+
+    branch_conn = connect(branch_override: "feature/meta")
+    assert table_exists_in_schema?(branch_conn, "branch_feature_meta", "ar_internal_metadata"),
+      "ar_internal_metadata should be shadowed into branch schema"
+
+    branch_conn.execute("UPDATE ar_internal_metadata SET value = 'test' WHERE key = 'environment'")
+
+    branch_val = branch_conn.select_value("SELECT value FROM ar_internal_metadata WHERE key = 'environment'")
+    assert_equal "test", branch_val
+
+    public_val = branch_conn.select_value("SELECT value FROM public.ar_internal_metadata WHERE key = 'environment'")
+    assert_equal "development", public_val
+  end
 end

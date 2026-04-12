@@ -8,47 +8,32 @@ module ActiveRecord
               namespace :branch do
                 desc "Drop and recreate the current branch schema"
                 task reset: :load_config do
-                  connection = ActiveRecord::Base.lease_connection
-                  manager = BranchManager.new(connection)
+                  manager = branch_manager
 
                   if manager.primary_branch?
                     puts "On primary branch (#{manager.branch}), nothing to reset."
                     next
                   end
 
-                  schema = manager.schema
-                  connection.execute("DROP SCHEMA IF EXISTS #{connection.quote_column_name(schema)} CASCADE")
-                  connection.execute("CREATE SCHEMA #{connection.quote_column_name(schema)}")
-                  connection.execute("SET search_path TO #{schema}, public")
-                  puts "Reset branch schema #{schema}. Run db:migrate to reapply branch migrations."
+                  manager.reset
+                  puts "Reset branch schema #{manager.branch_schema}. Run db:migrate to reapply branch migrations."
                 end
 
                 desc "Drop the current branch schema entirely"
                 task discard: :load_config do
-                  connection = ActiveRecord::Base.lease_connection
-                  branch_name = ENV["BRANCH"] || ENV["PGBRANCH"] || `git branch --show-current`.strip
-                  schema = BranchManager.sanitise(branch_name)
+                  manager = branch_manager
+                  branch = ENV["BRANCH"] || manager.branch
+                  schema = BranchManager.sanitise(branch)
 
-                  if schema == BranchManager.sanitise(connection.pool.db_config.configuration_hash[:primary_branch] || "main")
-                    puts "Cannot discard the primary branch schema."
-                    next
-                  end
-
-                  connection.execute("DROP SCHEMA IF EXISTS #{connection.quote_column_name(schema)} CASCADE")
+                  manager.discard(branch)
                   puts "Discarded branch schema #{schema}."
+                rescue => e
+                  puts e.message
                 end
 
                 desc "List all branch schemas and their sizes"
                 task list: :load_config do
-                  connection = ActiveRecord::Base.lease_connection
-                  rows = connection.select_rows(<<~SQL)
-                    SELECT schema_name,
-                           pg_size_pretty(sum(pg_total_relation_size(quote_ident(schema_name) || '.' || quote_ident(table_name)))) AS size
-                    FROM information_schema.tables
-                    WHERE schema_name LIKE 'branch_%'
-                    GROUP BY schema_name
-                    ORDER BY schema_name
-                  SQL
+                  rows = branch_manager.list
 
                   if rows.empty?
                     puts "No branch schemas found."
@@ -60,28 +45,28 @@ module ActiveRecord
 
                 desc "Show objects in the current branch schema vs public"
                 task diff: :load_config do
-                  connection = ActiveRecord::Base.lease_connection
-                  manager = BranchManager.new(connection)
+                  manager = branch_manager
 
                   if manager.primary_branch?
                     puts "On primary branch, no diff."
                     next
                   end
 
-                  branch_tables = connection.select_values(<<~SQL)
-                    SELECT table_name FROM information_schema.tables
-                    WHERE table_schema = #{connection.quote(manager.schema)} AND table_type = 'BASE TABLE'
-                    ORDER BY table_name
-                  SQL
+                  tables = manager.diff
 
-                  if branch_tables.empty?
-                    puts "No branch-local objects in #{manager.schema}."
+                  if tables.empty?
+                    puts "No branch-local objects in #{manager.branch_schema}."
                   else
-                    puts "Branch-local objects in #{manager.schema}:"
-                    branch_tables.each { |t| puts "  #{t}" }
+                    puts "Branch-local objects in #{manager.branch_schema}:"
+                    tables.each { |t| puts "  #{t}" }
                   end
                 end
               end
+            end
+
+            def branch_manager
+              connection = ActiveRecord::Base.lease_connection
+              BranchManager.new(connection, connection.instance_variable_get(:@config))
             end
           end
 
