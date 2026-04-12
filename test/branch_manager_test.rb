@@ -33,11 +33,23 @@ class BranchManagerTest < Minitest::Test
     assert_equal "branch_weirdbranch", BranchManager.sanitise("weird!@#branch")
   end
 
-  def test_sanitise_very_long_branch_name
+  def test_sanitise_truncates_long_branch_names
     long_name = "feature/" + "a" * 200
     schema = BranchManager.sanitise(long_name)
+    assert_operator schema.bytesize, :<=, 63
     assert schema.start_with?("branch_feature_")
-    assert_equal "branch_feature_" + "a" * 200, schema
+  end
+
+  def test_sanitise_long_names_with_different_suffixes_do_not_collide
+    base = "a" * 200
+    schema_a = BranchManager.sanitise(base + "_alpha")
+    schema_b = BranchManager.sanitise(base + "_bravo")
+    refute_equal schema_a, schema_b, "Different long branches must produce different schema names"
+  end
+
+  def test_sanitise_short_names_are_not_truncated
+    schema = BranchManager.sanitise("feature/short")
+    assert_equal "branch_feature_short", schema
   end
 
   def test_empty_branch_raises
@@ -154,6 +166,19 @@ class BranchManagerTest < Minitest::Test
     manager = conn.branch_manager
 
     assert_equal [], manager.diff
+  ensure
+    teardown_test_database
+  end
+
+  def test_list_works_with_empty_schema
+    setup_test_database
+    conn = connect(branch_override: "feature/empty")
+    manager = conn.branch_manager
+
+    # Schema exists (created by activate) but has only shadowed migration tables
+    rows = manager.list
+    schema_names = rows.map(&:first)
+    assert_includes schema_names, "branch_feature_empty"
   ensure
     teardown_test_database
   end

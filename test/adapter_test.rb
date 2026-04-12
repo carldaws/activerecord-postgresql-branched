@@ -118,4 +118,25 @@ class AdapterTest < Minitest::Test
     public_val = branch_conn.select_value("SELECT value FROM public.ar_internal_metadata WHERE key = 'environment'")
     assert_equal "development", public_val
   end
+
+  def test_cross_branch_isolation
+    conn_a = connect(branch_override: "feature/alpha")
+    conn_a.create_table(:alpha_things) { |t| t.string :name }
+    conn_a.execute("INSERT INTO alpha_things (name) VALUES ('from_alpha')")
+    ActiveRecord::Base.connection_pool.disconnect!
+
+    conn_b = connect(branch_override: "feature/bravo")
+    conn_b.create_table(:bravo_things) { |t| t.string :name }
+    conn_b.execute("INSERT INTO bravo_things (name) VALUES ('from_bravo')")
+
+    # bravo should not see alpha's table
+    refute table_exists_in_schema?(conn_b, "branch_feature_bravo", "alpha_things")
+
+    alpha_visible = conn_b.select_value(<<~SQL)
+      SELECT 1 FROM information_schema.tables
+      WHERE table_name = 'alpha_things'
+        AND table_schema IN ('branch_feature_bravo', 'public')
+    SQL
+    assert_nil alpha_visible, "Branch bravo should not see alpha's tables"
+  end
 end

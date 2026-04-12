@@ -42,14 +42,16 @@ module ActiveRecord
 
           def list
             @connection.select_rows(<<~SQL)
-              SELECT table_schema,
-                     pg_size_pretty(sum(pg_total_relation_size(
-                       quote_ident(table_schema) || '.' || quote_ident(table_name)
-                     ))) AS size
-              FROM information_schema.tables
-              WHERE table_schema LIKE 'branch_%'
-              GROUP BY table_schema
-              ORDER BY table_schema
+              SELECT s.schema_name,
+                     COALESCE(pg_size_pretty(sum(pg_total_relation_size(
+                       quote_ident(t.table_schema) || '.' || quote_ident(t.table_name)
+                     ))), '0 bytes') AS size
+              FROM information_schema.schemata s
+              LEFT JOIN information_schema.tables t
+                ON t.table_schema = s.schema_name AND t.table_type = 'BASE TABLE'
+              WHERE s.schema_name LIKE 'branch_%'
+              GROUP BY s.schema_name
+              ORDER BY s.schema_name
             SQL
           end
 
@@ -64,8 +66,35 @@ module ActiveRecord
             SQL
           end
 
+          MAX_SCHEMA_LENGTH = 63
+          PREFIX = "branch_"
+
           def self.sanitise(branch)
-            "branch_" + branch.downcase.gsub(/[\/\-\.]/, "_").gsub(/[^a-z0-9_]/, "")
+            slug = branch.downcase.gsub(/[\/\-\.]/, "_").gsub(/[^a-z0-9_]/, "")
+            schema = PREFIX + slug
+
+            return schema if schema.bytesize <= MAX_SCHEMA_LENGTH
+
+            # Truncate and append a short hash to avoid collisions
+            hash = Digest::SHA256.hexdigest(slug)[0, 8]
+            max_slug = MAX_SCHEMA_LENGTH - PREFIX.bytesize - 9 # 9 = underscore + 8 char hash
+            PREFIX + slug[0, max_slug] + "_" + hash
+          end
+
+          def prune
+            git_branches = `git branch --list 2>/dev/null`.lines.map { |l| l.strip.delete_prefix("* ") }
+            active_schemas = git_branches.map { |b| self.class.sanitise(b) }.to_set
+
+            all_branch_schemas = @connection.select_values(<<~SQL)
+              SELECT schema_name FROM information_schema.schemata
+              WHERE schema_name LIKE 'branch_%'
+            SQL
+
+            stale = all_branch_schemas.reject { |s| active_schemas.include?(s) }
+            stale.each do |schema|
+              @connection.execute("DROP SCHEMA IF EXISTS #{quote(schema)} CASCADE")
+            end
+            stale
           end
 
           def self.resolve_branch_name(config)

@@ -102,6 +102,7 @@ rails db:branch:reset    # drop and recreate current branch schema
 rails db:branch:discard  # drop current branch schema entirely
 rails db:branch:list     # list all branch schemas and their sizes
 rails db:branch:diff     # show objects in this branch vs public
+rails db:branch:prune    # drop schemas for branches that no longer exist in git
 ```
 
 ### Rebasing
@@ -121,6 +122,16 @@ rails db:branch:discard
 # or for a specific branch:
 rails db:branch:discard BRANCH=feature/abandoned
 ```
+
+### Pruning stale schemas
+
+After agents finish or branches are deleted:
+
+```bash
+rails db:branch:prune
+```
+
+Compares branch schemas against `git branch --list` and drops any that no longer have a corresponding local branch.
 
 ## The merge story
 

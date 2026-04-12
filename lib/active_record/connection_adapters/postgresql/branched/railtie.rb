@@ -43,6 +43,18 @@ module ActiveRecord
                   end
                 end
 
+                desc "Drop schemas for branches that no longer exist in git"
+                task prune: :load_config do
+                  pruned = branch_manager.prune
+
+                  if pruned.empty?
+                    puts "No stale branch schemas found."
+                  else
+                    puts "Pruned #{pruned.size} stale branch schema#{"s" if pruned.size > 1}:"
+                    pruned.each { |s| puts "  #{s}" }
+                  end
+                end
+
                 desc "Show objects in the current branch schema vs public"
                 task diff: :load_config do
                   manager = branch_manager
