@@ -17,14 +17,14 @@ class ShadowTest < Minitest::Test
     conn.execute("CREATE TABLE public.users (id serial PRIMARY KEY, name varchar)")
     conn.execute("INSERT INTO public.users (name) VALUES ('alice'), ('bob')")
 
-    refute table_exists_in_schema?(conn, "pgb_feature_shadow", "users")
+    refute table_exists_in_schema?(conn, "branch_feature_shadow", "users")
 
     conn.add_column :users, :bio, :string
 
-    assert table_exists_in_schema?(conn, "pgb_feature_shadow", "users"),
+    assert table_exists_in_schema?(conn, "branch_feature_shadow", "users"),
       "users should be shadowed after add_column"
 
-    assert column_exists_in_schema?(conn, "pgb_feature_shadow", "users", "bio"),
+    assert column_exists_in_schema?(conn, "branch_feature_shadow", "users", "bio"),
       "bio column should exist in the shadowed table"
 
     count = conn.select_value("SELECT count(*) FROM users")
@@ -40,7 +40,7 @@ class ShadowTest < Minitest::Test
     conn.add_column :users, :bio, :string
     conn.add_column :users, :age, :integer
 
-    count = conn.select_value("SELECT count(*) FROM pgb_feature_shadow2.users")
+    count = conn.select_value("SELECT count(*) FROM branch_feature_shadow2.users")
     assert_equal 1, count, "Data should not be duplicated by second DDL"
   end
 
@@ -61,7 +61,7 @@ class ShadowTest < Minitest::Test
       t.integer :amount
     end
 
-    assert table_exists_in_schema?(conn, "pgb_feature_new_table", "payments"),
+    assert table_exists_in_schema?(conn, "branch_feature_new_table", "payments"),
       "New table should be in branch schema"
     refute table_exists_in_schema?(conn, "public", "payments"),
       "New table should NOT be in public"
@@ -75,7 +75,7 @@ class ShadowTest < Minitest::Test
 
     conn.add_index :orders, :status
 
-    assert table_exists_in_schema?(conn, "pgb_feature_idx", "orders"),
+    assert table_exists_in_schema?(conn, "branch_feature_idx", "orders"),
       "orders should be shadowed after add_index"
   end
 
@@ -87,9 +87,9 @@ class ShadowTest < Minitest::Test
 
     conn.remove_column :users, :legacy
 
-    assert table_exists_in_schema?(conn, "pgb_feature_rm_col", "users"),
+    assert table_exists_in_schema?(conn, "branch_feature_rm_col", "users"),
       "users should be shadowed after remove_column"
-    refute column_exists_in_schema?(conn, "pgb_feature_rm_col", "users", "legacy"),
+    refute column_exists_in_schema?(conn, "branch_feature_rm_col", "users", "legacy"),
       "legacy column should be gone from shadowed table"
 
     assert column_exists_in_schema?(conn, "public", "users", "legacy"),
@@ -105,7 +105,7 @@ class ShadowTest < Minitest::Test
 
     assert table_exists_in_schema?(conn, "public", "legacy"),
       "Public table should not be affected by drop on branch"
-    refute table_exists_in_schema?(conn, "pgb_feature_drop", "legacy"),
+    refute table_exists_in_schema?(conn, "branch_feature_drop", "legacy"),
       "Shadow should have been dropped"
   end
 end

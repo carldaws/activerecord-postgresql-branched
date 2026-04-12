@@ -13,40 +13,40 @@ class AdapterTest < Minitest::Test
 
   def test_creates_branch_schema_on_connect
     conn = connect(branch_override: "feature/payments")
-    assert schema_exists?(conn, "pgb_feature_payments"),
-      "Expected branch schema pgb_feature_payments to exist"
+    assert schema_exists?(conn, "branch_feature_payments"),
+      "Expected branch schema branch_feature_payments to exist"
   end
 
   def test_sets_search_path_to_branch_and_public
     conn = connect(branch_override: "feature/payments")
     search_path = conn.select_value("SHOW search_path")
-    assert_equal "pgb_feature_payments, public", search_path
+    assert_equal "branch_feature_payments, public", search_path
   end
 
   def test_primary_branch_does_not_create_schema
     conn = connect(branch_override: "main")
-    refute schema_exists?(conn, "pgb_main"),
-      "Expected pgb_main schema NOT to be created on primary branch"
+    refute schema_exists?(conn, "branch_main"),
+      "Expected branch_main schema NOT to be created on primary branch"
   end
 
   def test_primary_branch_leaves_search_path_alone
     conn = connect(branch_override: "main")
     search_path = conn.select_value("SHOW search_path")
-    # Should NOT contain pgb_main
-    refute_includes search_path, "pgb_main"
+    # Should NOT contain branch_main
+    refute_includes search_path, "branch_main"
   end
 
   def test_custom_primary_branch
     conn = connect(branch_override: "trunk", primary_branch: "trunk")
-    refute schema_exists?(conn, "pgb_trunk"),
-      "Expected pgb_trunk schema NOT to be created when trunk is primary"
+    refute schema_exists?(conn, "branch_trunk"),
+      "Expected branch_trunk schema NOT to be created when trunk is primary"
   end
 
   def test_branch_override_via_config
     conn = connect(branch_override: "agent-0")
-    assert schema_exists?(conn, "pgb_agent_0")
+    assert schema_exists?(conn, "branch_agent_0")
     search_path = conn.select_value("SHOW search_path")
-    assert_equal "pgb_agent_0, public", search_path
+    assert_equal "branch_agent_0, public", search_path
   end
 
   def test_branch_table_takes_precedence_over_public
@@ -55,8 +55,8 @@ class AdapterTest < Minitest::Test
     conn.execute("CREATE TABLE public.widgets (id serial PRIMARY KEY, name varchar)")
     conn.execute("INSERT INTO public.widgets (name) VALUES ('public_widget')")
 
-    conn.execute("CREATE TABLE pgb_feature_test.widgets (id serial PRIMARY KEY, name varchar, extra varchar)")
-    conn.execute("INSERT INTO pgb_feature_test.widgets (name, extra) VALUES ('branch_widget', 'bonus')")
+    conn.execute("CREATE TABLE branch_feature_test.widgets (id serial PRIMARY KEY, name varchar, extra varchar)")
+    conn.execute("INSERT INTO branch_feature_test.widgets (name, extra) VALUES ('branch_widget', 'bonus')")
 
     result = conn.select_value("SELECT name FROM widgets LIMIT 1")
     assert_equal "branch_widget", result
@@ -83,7 +83,7 @@ class AdapterTest < Minitest::Test
 
     # Connect on a feature branch — schema_migrations should be shadowed
     branch_conn = connect(branch_override: "feature/isolated")
-    assert table_exists_in_schema?(branch_conn, "pgb_feature_isolated", "schema_migrations"),
+    assert table_exists_in_schema?(branch_conn, "branch_feature_isolated", "schema_migrations"),
       "schema_migrations should be shadowed into branch schema"
 
     # Branch migration adds its own timestamp

@@ -24,7 +24,7 @@ class SchemaDumperTest < Minitest::Test
 
     assert_includes output, "create_table"
     assert_includes output, "widgets"
-    refute_includes output, "pgb_", "Schema dump should not contain pgb_ references"
+    refute_includes output, "branch_", "Schema dump should not contain branch_ references"
   end
 
   def test_dump_branch_with_shadowed_table
@@ -37,7 +37,7 @@ class SchemaDumperTest < Minitest::Test
 
     assert_includes output, "users"
     assert_includes output, "bio"
-    refute_includes output, "pgb_", "Schema dump should not contain pgb_ references"
+    refute_includes output, "branch_", "Schema dump should not contain branch_ references"
   end
 
   def test_dump_includes_public_tables
@@ -52,7 +52,7 @@ class SchemaDumperTest < Minitest::Test
 
     assert_includes output, "products", "Public tables should appear in dump"
     assert_includes output, "widgets", "Branch tables should appear in dump"
-    refute_includes output, "pgb_"
+    refute_includes output, "branch_"
   end
 
   private

@@ -45,7 +45,7 @@ module ActiveRecord
                     SELECT schema_name,
                            pg_size_pretty(sum(pg_total_relation_size(quote_ident(schema_name) || '.' || quote_ident(table_name)))) AS size
                     FROM information_schema.tables
-                    WHERE schema_name LIKE 'pgb_%'
+                    WHERE schema_name LIKE 'branch_%'
                     GROUP BY schema_name
                     ORDER BY schema_name
                   SQL

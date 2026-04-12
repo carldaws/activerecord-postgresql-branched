@@ -29,7 +29,7 @@ module ActiveRecord
           end
 
           def self.sanitise(branch)
-            "pgb_" + branch.downcase.gsub(/[\/\-\.]/, "_").gsub(/[^a-z0-9_]/, "")
+            "branch_" + branch.downcase.gsub(/[\/\-\.]/, "_").gsub(/[^a-z0-9_]/, "")
           end
 
           private

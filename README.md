@@ -41,8 +41,8 @@ Every git branch gets a dedicated Postgres schema. On connection, the adapter re
 
 ```
 git branch: feature/payments
-schema:      pgb_feature_payments
-search_path: pgb_feature_payments, public
+schema:      branch_feature_payments
+search_path: branch_feature_payments, public
 ```
 
 Migrations land in the branch schema. Queries against untouched tables fall through to `public`. Nothing in `public` is ever modified except on the primary branch.
@@ -54,8 +54,8 @@ When a migration modifies a table that exists in `public` but not yet in the bra
 ```
 migration: add_column :users, :bio, :string
 
-1. CREATE TABLE pgb_feature_payments.users (LIKE public.users INCLUDING ALL)
-2. INSERT INTO pgb_feature_payments.users SELECT * FROM public.users
+1. CREATE TABLE branch_feature_payments.users (LIKE public.users INCLUDING ALL)
+2. INSERT INTO branch_feature_payments.users SELECT * FROM public.users
 3. ALTER TABLE users ADD COLUMN bio VARCHAR
 ```
 
@@ -138,7 +138,7 @@ The adapter does not merge. Git does.
 
 `db:schema:dump` presents a unified view of the current branch:
 
-- Branch-local tables are included without `pgb_` prefix
+- Branch-local tables are included without `branch_` prefix
 - Shadowed tables show the branch version
 - Public tables that the branch has not touched are included as normal
 - No other branches' tables appear
