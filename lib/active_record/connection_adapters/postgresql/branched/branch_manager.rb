@@ -12,16 +12,10 @@ module ActiveRecord
             @branch_schema = self.class.sanitise(@branch)
           end
 
-          def activate
-            return if primary_branch?
-
+          def activate(shadow)
             ensure_schema
             set_search_path
-            shadow_migration_tables
-          end
-
-          def primary_branch?
-            @branch == primary_branch_name
+            shadow_migration_tables(shadow)
           end
 
           def reset
@@ -32,11 +26,6 @@ module ActiveRecord
 
           def discard(branch_name = @branch)
             schema = self.class.sanitise(branch_name)
-
-            if schema == self.class.sanitise(primary_branch_name)
-              raise "Cannot discard the primary branch schema"
-            end
-
             @connection.execute("DROP SCHEMA IF EXISTS #{quote(schema)} CASCADE")
           end
 
@@ -56,8 +45,6 @@ module ActiveRecord
           end
 
           def diff
-            return [] if primary_branch?
-
             @connection.select_values(<<~SQL)
               SELECT table_name FROM information_schema.tables
               WHERE table_schema = #{@connection.quote(@branch_schema)}
@@ -75,14 +62,13 @@ module ActiveRecord
 
             return schema if schema.bytesize <= MAX_SCHEMA_LENGTH
 
-            # Truncate and append a short hash to avoid collisions
             hash = Digest::SHA256.hexdigest(slug)[0, 8]
-            max_slug = MAX_SCHEMA_LENGTH - PREFIX.bytesize - 9 # 9 = underscore + 8 char hash
+            max_slug = MAX_SCHEMA_LENGTH - PREFIX.bytesize - 9
             PREFIX + slug[0, max_slug] + "_" + hash
           end
 
           def prune(keep: nil)
-            active_schemas = if keep
+            keep_schemas = if keep
               Array(keep).map { |b| self.class.sanitise(b) }.to_set
             else
               git_branches = `git branch --list 2>/dev/null`.lines.map { |l| l.strip.delete_prefix("* ") }
@@ -97,35 +83,28 @@ module ActiveRecord
               WHERE schema_name LIKE 'branch_%'
             SQL
 
-            stale = all_branch_schemas.reject { |s| active_schemas.include?(s) }
+            stale = all_branch_schemas.reject { |s| keep_schemas.include?(s) }
             stale.each do |schema|
               @connection.execute("DROP SCHEMA IF EXISTS #{quote(schema)} CASCADE")
             end
             stale
           end
 
-          def self.resolve_branch_name(config)
-            config[:branch_override]&.to_s ||
-              ENV["BRANCH"] ||
-              ENV["PGBRANCH"] ||
-              git_branch
+          def self.resolve_branch_name
+            ENV["PGBRANCH"] || git_branch
           end
 
           private
 
           def resolve_branch
-            name = self.class.resolve_branch_name(@config)
+            name = self.class.resolve_branch_name
 
             if name.nil? || name.empty?
-              raise "Could not determine git branch. " \
-                    "Set branch_override in database.yml or the PGBRANCH environment variable."
+              raise "Could not determine branch. " \
+                    "Set the PGBRANCH environment variable."
             end
 
             name
-          end
-
-          def primary_branch_name
-            (@config[:primary_branch] || "main").to_s
           end
 
           def ensure_schema
@@ -140,8 +119,7 @@ module ActiveRecord
             @connection.schema_search_path = "#{@branch_schema}, public"
           end
 
-          def shadow_migration_tables
-            shadow = Shadow.new(@connection, @branch_schema)
+          def shadow_migration_tables(shadow)
             shadow.call(ActiveRecord::Base.schema_migrations_table_name)
             shadow.call(ActiveRecord::Base.internal_metadata_table_name)
           end

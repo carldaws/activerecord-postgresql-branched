@@ -1,20 +1,16 @@
 # activerecord-postgresql-branched
 
-Database isolation for parallel development. Each git branch (or agent) gets its own Postgres schema. Migrations run in isolation. Nobody steps on anyone else's work.
-
-Built for teams running multiple AI coding agents in parallel, each on its own worktree, all sharing one database.
+A Rails database adapter that gives each branch its own PostgreSQL schema. Your database structure follows your branch, just like your code does.
 
 ## The problem
 
-You have three agents working simultaneously in three worktrees:
+You're working on a feature branch. You write a migration that adds a column to `users`. You run it. Then you need to switch branches — a review, a hotfix, something urgent.
 
-- `agent-0` adds a `payments` table and alters `users`
-- `agent-1` adds a `bio` column to `users`
-- `agent-2` drops a legacy table and adds indexes
+The other branch knows nothing about that column. But your development database does. `schema.rb` is dirty. Migrations are out of sync. If the other branch has its own migration, you now have two branches' worth of structural changes in one database with no way to tell which change belongs where.
 
-They share one dev database. Every migration collides. Every agent breaks every other agent. You spend more time untangling the database than reviewing the code.
+You either undo your migration before switching (and redo it when you come back), maintain multiple databases by hand, or just live with the mess. None of these are good.
 
-This adapter makes branching the database as cheap as branching the code.
+Git solved this problem for code decades ago. This adapter solves it for your database.
 
 ## Installation
 
@@ -30,82 +26,67 @@ development:
   database: myapp_development
 ```
 
-That's it. No Postgres extensions, no environment variables, no initializers.
+Set the `PGBRANCH` environment variable to name your branch, or let the adapter detect it from git automatically:
+
+```bash
+export PGBRANCH=feature/payments
+```
+
+That's it. No PostgreSQL extensions, no initializers, no extra configuration.
 
 ## How it works
 
-On connection, the adapter reads the current git branch, creates a dedicated Postgres schema for it, and sets `search_path`:
+On connection, the adapter creates a dedicated PostgreSQL schema for the current branch and sets `search_path`:
 
 ```
-git branch: feature/payments
+PGBRANCH=feature/payments
+
 schema:      branch_feature_payments
 search_path: branch_feature_payments, public
 ```
 
-New tables go into the branch schema. Queries against existing tables fall through to `public` via standard Postgres name resolution.
+New tables go into the branch schema. Queries against tables that don't exist in the branch schema fall through to `public` via standard PostgreSQL name resolution. No data copying for reads.
 
-When a migration modifies a table that exists in `public`, the adapter shadows it first -- copies the table and its data into the branch schema, then applies the DDL to the copy. The public table is never touched.
+### The shadow rule
 
-On the primary branch (`main` by default), the adapter stands aside entirely. Migrations land in `public` as normal. When `public` advances, every branch sees the changes immediately via `search_path` fallthrough.
+When a migration modifies a table that exists in `public` but not yet in the branch schema, the adapter **shadows** it first — copies the table structure and data into the branch schema, then applies the DDL to the copy:
 
-## Agentic workflows
+```
+add_column :users, :bio, :string
 
-Give each agent its own branch identity:
-
-```yaml
-# config/database.yml
-development:
-  adapter: postgresql_branched
-  database: myapp_development
-  branch_override: <%= ENV.fetch("AGENT_BRANCH", nil) %>
+1. CREATE TABLE branch_feature_payments.users (LIKE public.users INCLUDING ALL)
+2. INSERT INTO branch_feature_payments.users SELECT * FROM public.users
+3. ALTER TABLE users ADD COLUMN bio VARCHAR
 ```
 
-```bash
-# Launch agents with isolated schemas
-AGENT_BRANCH=agent-0 bundle exec rails ...
-AGENT_BRANCH=agent-1 bundle exec rails ...
-AGENT_BRANCH=agent-2 bundle exec rails ...
-```
+The public table is never touched. Step 3 operates on the shadow because `search_path` resolves `users` to the branch schema first.
 
-Or in a worktree-per-agent setup, each worktree is on its own git branch and the adapter picks it up automatically. No configuration needed beyond the adapter name.
+This applies to any DDL that modifies an existing table: `add_column`, `remove_column`, `add_index`, `add_foreign_key`, `drop_table`, and so on.
 
-### Cleanup
+### schema.rb stays clean
 
-After agents finish:
+`db:schema:dump` presents a unified view as if everything lived in `public`:
 
-```bash
-rails db:branch:prune
-```
+- Branch-local tables appear without schema prefixes
+- Shadowed tables show the branch version (with new columns, dropped indexes, etc.)
+- Public tables the branch hasn't touched are included as normal
 
-Compares branch schemas against `git branch --list` and drops any that no longer have a corresponding local branch. One command, all stale schemas gone.
+The diff for a schema change looks exactly as it always has. Switch branches, and `schema.rb` reflects that branch's database state — not the accumulated mess of every migration you've run lately.
 
-For specific branches:
+## Switching branches
 
-```bash
-rails db:branch:discard BRANCH=agent-0
-```
+This is the whole point. When you switch git branches:
 
-## Rake tasks
+- The new branch gets its own schema (created on first connection if needed)
+- Its migrations are tracked independently
+- Tables it hasn't touched fall through to `public`
+- Tables it has modified are isolated in its own schema
 
-```bash
-rails db:branch:reset    # drop and recreate current branch schema
-rails db:branch:discard  # drop current branch schema (or BRANCH=name)
-rails db:branch:list     # list all branch schemas and their sizes
-rails db:branch:diff     # show objects in this branch vs public
-rails db:branch:prune    # drop schemas for branches no longer in git
-```
+Switch back, and your previous branch's state is exactly where you left it.
 
-## Configuration
+## Deploying
 
-```yaml
-development:
-  adapter: postgresql_branched
-  database: myapp_development
-  primary_branch: main        # default, can be 'master', 'trunk', etc.
-  branch_override: agent-0    # bypass git, set branch explicitly
-```
-
-The `PGBRANCH` or `BRANCH` environment variables also work for explicit branch selection.
+The adapter is for development and test only. Production and staging use the standard `postgresql` adapter — migrations land directly in the database as they always have. The canonical schema advances through your normal deployment process.
 
 ## Rebasing
 
@@ -115,35 +96,50 @@ rails db:branch:reset
 rails db:migrate
 ```
 
-`db:branch:reset` drops the branch schema. `search_path` falls through to the updated `public`. Re-running `db:migrate` reapplies your branch's migrations on top of the new baseline.
+`db:branch:reset` drops the branch schema. Queries fall through to `public`. Re-running `db:migrate` reapplies your branch's migrations on top of the current baseline.
 
-## The merge story
+## Parallel agents
 
-The adapter does not merge. Git does.
+The same isolation that helps you switch branches also helps when running multiple AI agents in parallel, each on its own worktree:
 
-1. Agent writes migrations on its branch
-2. Adapter isolates them in a branch schema automatically
-3. PR merged into `main`
-4. Team pulls `main`, runs `db:migrate`
-5. Adapter stands aside (primary branch), migrations land in `public`
-6. `schema.rb` updated and committed
-7. All active branch schemas see updated `public` via fallthrough
+```bash
+PGBRANCH=agent-0 bundle exec rails ...
+PGBRANCH=agent-1 bundle exec rails ...
+PGBRANCH=agent-2 bundle exec rails ...
+```
 
-## schema.rb
+Each agent gets full isolation. No locks, no coordination. When an agent's work is done:
 
-`db:schema:dump` presents a unified view of the current branch as if everything lived in `public`:
+```bash
+rails db:branch:discard BRANCH=agent-0
+```
 
-- Branch-local tables appear without the `branch_` prefix
-- Shadowed tables show the branch version
-- Public tables the branch hasn't touched are included as normal
-- No schema references, no branch artifacts
+## Rake tasks
 
-The diff for a schema change looks exactly as it always has.
+```bash
+rails db:branch:reset              # drop and recreate current branch schema
+rails db:branch:discard             # drop current branch schema (or BRANCH=name)
+rails db:branch:list                # list all branch schemas and their sizes
+rails db:branch:diff                # show tables in the current branch schema
+rails db:branch:prune               # drop stale schemas (KEEP=main,feature/x or auto-detect from git)
+```
+
+## Configuration
+
+The adapter needs one thing: a branch name. Resolution order:
+
+1. `PGBRANCH` environment variable
+2. `git branch --show-current` (automatic fallback)
+
+If neither is available, the adapter raises an error.
+
+All standard PostgreSQL connection parameters work as normal (`host`, `port`, `username`, `password`, etc.).
+
+**Do not set `schema_search_path` in database.yml** — it conflicts with the adapter's `search_path` management.
 
 ## Limitations
 
-- **Rails + Postgres only** -- uses Postgres schemas and `search_path`
-- **Dev only** -- production and staging should use the standard `postgresql` adapter
-- **No `schema_search_path` in database.yml** -- it will conflict with the adapter
-- **Non-ActiveRecord DDL** -- raw SQL outside of migrations bypasses the shadow rule
-- **Sequences on shadowed tables** -- `rename_table` on a shadowed table with serial columns works, but the sequence keeps its original name
+- **Rails + PostgreSQL only** — uses PostgreSQL schemas and `search_path`
+- **Development and test only** — production should use the standard `postgresql` adapter
+- **Non-ActiveRecord DDL** — raw SQL outside of migrations bypasses the shadow rule
+- **Sequences on shadowed tables** — `rename_table` on a shadowed table with serial columns works, but the sequence keeps its original name

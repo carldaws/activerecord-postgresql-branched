@@ -13,7 +13,7 @@ class SchemaDumperTest < Minitest::Test
   end
 
   def test_dump_branch_with_new_table
-    conn = connect(branch_override: "feature/dump")
+    conn = connect(branch: "feature/dump")
 
     conn.create_table :widgets do |t|
       t.string :name
@@ -28,7 +28,7 @@ class SchemaDumperTest < Minitest::Test
   end
 
   def test_dump_branch_with_shadowed_table
-    conn = connect(branch_override: "feature/dump2")
+    conn = connect(branch: "feature/dump2")
 
     conn.execute("CREATE TABLE public.users (id serial PRIMARY KEY, name varchar)")
     conn.add_column :users, :bio, :string
@@ -41,7 +41,7 @@ class SchemaDumperTest < Minitest::Test
   end
 
   def test_dump_includes_public_tables
-    conn = connect(branch_override: "feature/dump3")
+    conn = connect(branch: "feature/dump3")
 
     conn.execute("CREATE TABLE public.products (id serial PRIMARY KEY, title varchar)")
     conn.create_table :widgets do |t|
@@ -53,18 +53,6 @@ class SchemaDumperTest < Minitest::Test
     assert_includes output, "products", "Public tables should appear in dump"
     assert_includes output, "widgets", "Branch tables should appear in dump"
     refute_includes output, "branch_"
-  end
-
-  def test_dump_on_primary_branch_is_standard
-    conn = connect(branch_override: "main")
-
-    conn.execute("CREATE TABLE public.products (id serial PRIMARY KEY, title varchar)")
-
-    output = dump_schema(conn)
-
-    assert_includes output, "products"
-    refute_includes output, "branch_"
-    refute_includes output, "create_schema"
   end
 
   private

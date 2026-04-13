@@ -12,7 +12,7 @@ class ResetTest < Minitest::Test
   end
 
   def test_dropping_branch_schema_resets_to_public
-    conn = connect(branch_override: "feature/reset-me")
+    conn = connect(branch: "feature/reset-me")
 
     conn.execute("CREATE TABLE public.users (id serial PRIMARY KEY, name varchar)")
     conn.execute("INSERT INTO public.users (name) VALUES ('alice')")
@@ -20,12 +20,8 @@ class ResetTest < Minitest::Test
     conn.add_column :users, :bio, :string
     assert table_exists_in_schema?(conn, "branch_feature_reset_me", "users")
 
-    # Simulate db:branch:reset
-    conn.execute("DROP SCHEMA branch_feature_reset_me CASCADE")
-    conn.execute("CREATE SCHEMA branch_feature_reset_me")
-    conn.execute("SET search_path TO branch_feature_reset_me, public")
+    conn.branch_manager.reset
 
-    # Should fall through to public now
     refute column_exists_in_schema?(conn, "branch_feature_reset_me", "users", "bio")
 
     result = conn.select_value("SELECT name FROM users LIMIT 1")
@@ -33,12 +29,12 @@ class ResetTest < Minitest::Test
   end
 
   def test_discard_drops_schema_entirely
-    conn = connect(branch_override: "feature/discard-me")
+    conn = connect(branch: "feature/discard-me")
 
     conn.execute("CREATE TABLE branch_feature_discard_me.stale (id serial)")
     assert schema_exists?(conn, "branch_feature_discard_me")
 
-    conn.execute("DROP SCHEMA branch_feature_discard_me CASCADE")
+    conn.branch_manager.discard
     refute schema_exists?(conn, "branch_feature_discard_me")
   end
 end

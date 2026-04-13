@@ -34,13 +34,14 @@ module ActiveRecord
           end
 
           def create_shadow(table)
+            quoted_branch = @connection.quote_column_name(@branch_schema)
             quoted_table = @connection.quote_column_name(table)
             @connection.execute(<<~SQL)
-              CREATE TABLE #{@branch_schema}.#{quoted_table}
+              CREATE TABLE #{quoted_branch}.#{quoted_table}
                 (LIKE public.#{quoted_table} INCLUDING ALL)
             SQL
             @connection.execute(<<~SQL)
-              INSERT INTO #{@branch_schema}.#{quoted_table}
+              INSERT INTO #{quoted_branch}.#{quoted_table}
                 SELECT * FROM public.#{quoted_table}
             SQL
           end

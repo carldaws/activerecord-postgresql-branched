@@ -17,6 +17,12 @@ module ActiveRecord
             add_index
             remove_index
             rename_index
+            add_foreign_key
+            remove_foreign_key
+            add_check_constraint
+            remove_check_constraint
+            validate_foreign_key
+            validate_check_constraint
             drop_table
             change_table
             bulk_change_table
@@ -25,17 +31,17 @@ module ActiveRecord
           def initialize(...)
             super
             @branch_manager = BranchManager.new(self, @config)
-            @shadow = Shadow.new(self, @branch_manager.branch_schema) unless @branch_manager.primary_branch?
+            @shadow = Shadow.new(self, @branch_manager.branch_schema)
           end
 
           def configure_connection
             super
-            @branch_manager.activate
+            @branch_manager.activate(@shadow)
           end
 
           SHADOW_BEFORE.each do |method|
             define_method(method) do |table_name, *args, **kwargs, &block|
-              @shadow&.call(table_name)
+              @shadow.call(table_name)
               super(table_name, *args, **kwargs, &block)
             end
           end
@@ -45,10 +51,9 @@ module ActiveRecord
           # the branch schema. The table and index renames succeed before the
           # sequence rename fails, so we rescue the sequence error.
           def rename_table(table_name, new_name, **options)
-            @shadow&.call(table_name)
+            @shadow.call(table_name)
             super
           rescue ActiveRecord::StatementInvalid => e
-            raise if @branch_manager.primary_branch?
             raise unless e.cause.is_a?(PG::UndefinedTable)
           end
 

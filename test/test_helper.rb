@@ -22,16 +22,15 @@ module PGBTestSupport
     conn = PG.connect(dbname: "postgres")
     conn.exec("DROP DATABASE IF EXISTS #{DATABASE_NAME}")
     conn.close
+    ENV.delete("PGBRANCH")
   end
 
-  def connect(branch_override: nil, primary_branch: "main")
-    config = {
+  def connect(branch:)
+    ENV["PGBRANCH"] = branch
+    ActiveRecord::Base.establish_connection(
       adapter: "postgresql_branched",
-      database: DATABASE_NAME,
-      primary_branch: primary_branch
-    }
-    config[:branch_override] = branch_override if branch_override
-    ActiveRecord::Base.establish_connection(config)
+      database: DATABASE_NAME
+    )
     ActiveRecord::Base.lease_connection
   end
 

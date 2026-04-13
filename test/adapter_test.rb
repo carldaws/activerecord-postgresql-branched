@@ -12,45 +12,19 @@ class AdapterTest < Minitest::Test
   end
 
   def test_creates_branch_schema_on_connect
-    conn = connect(branch_override: "feature/payments")
+    conn = connect(branch: "feature/payments")
     assert schema_exists?(conn, "branch_feature_payments"),
       "Expected branch schema branch_feature_payments to exist"
   end
 
   def test_sets_search_path_to_branch_and_public
-    conn = connect(branch_override: "feature/payments")
+    conn = connect(branch: "feature/payments")
     search_path = conn.select_value("SHOW search_path")
     assert_equal "branch_feature_payments, public", search_path
   end
 
-  def test_primary_branch_does_not_create_schema
-    conn = connect(branch_override: "main")
-    refute schema_exists?(conn, "branch_main"),
-      "Expected branch_main schema NOT to be created on primary branch"
-  end
-
-  def test_primary_branch_leaves_search_path_alone
-    conn = connect(branch_override: "main")
-    search_path = conn.select_value("SHOW search_path")
-    # Should NOT contain branch_main
-    refute_includes search_path, "branch_main"
-  end
-
-  def test_custom_primary_branch
-    conn = connect(branch_override: "trunk", primary_branch: "trunk")
-    refute schema_exists?(conn, "branch_trunk"),
-      "Expected branch_trunk schema NOT to be created when trunk is primary"
-  end
-
-  def test_branch_override_via_config
-    conn = connect(branch_override: "agent-0")
-    assert schema_exists?(conn, "branch_agent_0")
-    search_path = conn.select_value("SHOW search_path")
-    assert_equal "branch_agent_0, public", search_path
-  end
-
   def test_branch_table_takes_precedence_over_public
-    conn = connect(branch_override: "feature/test")
+    conn = connect(branch: "feature/test")
 
     conn.execute("CREATE TABLE public.widgets (id serial PRIMARY KEY, name varchar)")
     conn.execute("INSERT INTO public.widgets (name) VALUES ('public_widget')")
@@ -63,7 +37,7 @@ class AdapterTest < Minitest::Test
   end
 
   def test_fallthrough_to_public
-    conn = connect(branch_override: "feature/test")
+    conn = connect(branch: "feature/test")
 
     conn.execute("CREATE TABLE public.products (id serial PRIMARY KEY, title varchar)")
     conn.execute("INSERT INTO public.products (title) VALUES ('from_public')")
@@ -73,40 +47,37 @@ class AdapterTest < Minitest::Test
   end
 
   def test_schema_migrations_isolated_per_branch
-    # Set up public schema_migrations with a baseline timestamp
-    main_conn = connect(branch_override: "main")
-    main_conn.execute(<<~SQL)
+    conn = connect(branch: "baseline")
+
+    conn.execute(<<~SQL)
       CREATE TABLE public.schema_migrations (version varchar NOT NULL PRIMARY KEY)
     SQL
-    main_conn.execute("INSERT INTO public.schema_migrations (version) VALUES ('20260101000000')")
+    conn.execute("INSERT INTO public.schema_migrations (version) VALUES ('20260101000000')")
     ActiveRecord::Base.connection_pool.disconnect!
 
-    # Connect on a feature branch — schema_migrations should be shadowed
-    branch_conn = connect(branch_override: "feature/isolated")
+    branch_conn = connect(branch: "feature/isolated")
     assert table_exists_in_schema?(branch_conn, "branch_feature_isolated", "schema_migrations"),
       "schema_migrations should be shadowed into branch schema"
 
-    # Branch migration adds its own timestamp
     branch_conn.execute("INSERT INTO schema_migrations (version) VALUES ('20260401000000')")
 
-    # Branch sees both timestamps
     branch_versions = branch_conn.select_values("SELECT version FROM schema_migrations ORDER BY version")
     assert_equal %w[20260101000000 20260401000000], branch_versions
 
-    # Public only has the original
     public_versions = branch_conn.select_values("SELECT version FROM public.schema_migrations ORDER BY version")
     assert_equal %w[20260101000000], public_versions
   end
 
   def test_ar_internal_metadata_isolated_per_branch
-    main_conn = connect(branch_override: "main")
-    main_conn.execute(<<~SQL)
+    conn = connect(branch: "baseline")
+
+    conn.execute(<<~SQL)
       CREATE TABLE public.ar_internal_metadata (key varchar NOT NULL PRIMARY KEY, value varchar)
     SQL
-    main_conn.execute("INSERT INTO public.ar_internal_metadata (key, value) VALUES ('environment', 'development')")
+    conn.execute("INSERT INTO public.ar_internal_metadata (key, value) VALUES ('environment', 'development')")
     ActiveRecord::Base.connection_pool.disconnect!
 
-    branch_conn = connect(branch_override: "feature/meta")
+    branch_conn = connect(branch: "feature/meta")
     assert table_exists_in_schema?(branch_conn, "branch_feature_meta", "ar_internal_metadata"),
       "ar_internal_metadata should be shadowed into branch schema"
 
@@ -120,16 +91,15 @@ class AdapterTest < Minitest::Test
   end
 
   def test_cross_branch_isolation
-    conn_a = connect(branch_override: "feature/alpha")
+    conn_a = connect(branch: "feature/alpha")
     conn_a.create_table(:alpha_things) { |t| t.string :name }
     conn_a.execute("INSERT INTO alpha_things (name) VALUES ('from_alpha')")
     ActiveRecord::Base.connection_pool.disconnect!
 
-    conn_b = connect(branch_override: "feature/bravo")
+    conn_b = connect(branch: "feature/bravo")
     conn_b.create_table(:bravo_things) { |t| t.string :name }
     conn_b.execute("INSERT INTO bravo_things (name) VALUES ('from_bravo')")
 
-    # bravo should not see alpha's table
     refute table_exists_in_schema?(conn_b, "branch_feature_bravo", "alpha_things")
 
     alpha_visible = conn_b.select_value(<<~SQL)

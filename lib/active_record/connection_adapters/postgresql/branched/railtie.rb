@@ -9,17 +9,11 @@ module ActiveRecord
                 desc "Drop and recreate the current branch schema"
                 task reset: :load_config do
                   manager = branch_manager
-
-                  if manager.primary_branch?
-                    puts "On primary branch (#{manager.branch}), nothing to reset."
-                    next
-                  end
-
                   manager.reset
                   puts "Reset branch schema #{manager.branch_schema}. Run db:migrate to reapply branch migrations."
                 end
 
-                desc "Drop the current branch schema entirely"
+                desc "Drop a branch schema (current branch or BRANCH=name)"
                 task discard: :load_config do
                   manager = branch_manager
                   branch = ENV["BRANCH"] || manager.branch
@@ -43,9 +37,10 @@ module ActiveRecord
                   end
                 end
 
-                desc "Drop schemas for branches that no longer exist in git"
+                desc "Drop schemas not in KEEP list (or not matching local git branches)"
                 task prune: :load_config do
-                  pruned = branch_manager.prune
+                  keep = ENV["KEEP"]&.split(",")&.map(&:strip)
+                  pruned = branch_manager.prune(keep: keep)
 
                   if pruned.empty?
                     puts "No stale branch schemas found."
@@ -55,15 +50,9 @@ module ActiveRecord
                   end
                 end
 
-                desc "Show objects in the current branch schema vs public"
+                desc "Show objects in the current branch schema"
                 task diff: :load_config do
                   manager = branch_manager
-
-                  if manager.primary_branch?
-                    puts "On primary branch, no diff."
-                    next
-                  end
-
                   tables = manager.diff
 
                   if tables.empty?
@@ -77,8 +66,7 @@ module ActiveRecord
             end
 
             def branch_manager
-              connection = ActiveRecord::Base.lease_connection
-              BranchManager.new(connection, connection.instance_variable_get(:@config))
+              ActiveRecord::Base.lease_connection.branch_manager
             end
           end
 
