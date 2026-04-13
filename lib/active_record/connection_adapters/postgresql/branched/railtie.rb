@@ -62,6 +62,22 @@ module ActiveRecord
                     tables.each { |t| puts "  #{t}" }
                   end
                 end
+
+                desc "Open psql with the branch search_path"
+                task console: :load_config do
+                  manager = branch_manager
+                  config = ActiveRecord::Base.connection_db_config.configuration_hash
+
+                  env = { "PGOPTIONS" => "-c search_path=#{manager.branch_schema},public" }
+                  args = ["psql"]
+                  args.push("-h", config[:host].to_s) if config[:host]
+                  args.push("-p", config[:port].to_s) if config[:port]
+                  args.push("-U", config[:username].to_s) if config[:username]
+                  args.push(config[:database].to_s)
+
+                  puts "Connecting to #{config[:database]} as #{manager.branch_schema}..."
+                  exec(env, *args)
+                end
               end
             end
 

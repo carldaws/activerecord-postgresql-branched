@@ -122,7 +122,12 @@ rails db:branch:discard             # drop current branch schema (or BRANCH=name
 rails db:branch:list                # list all branch schemas and their sizes
 rails db:branch:diff                # show tables in the current branch schema
 rails db:branch:prune               # drop stale schemas (KEEP=main,feature/x or auto-detect from git)
+rails db:branch:console             # open psql with the branch search_path
 ```
+
+### psql
+
+`psql` connects directly to PostgreSQL and knows nothing about branch schemas. Use `db:branch:console` instead — it launches psql with `search_path` set to your branch schema, so you see exactly what your Rails app sees.
 
 ## Configuration
 
