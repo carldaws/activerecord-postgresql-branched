@@ -108,4 +108,57 @@ class ShadowTest < Minitest::Test
     refute table_exists_in_schema?(conn, "branch_feature_drop", "legacy"),
       "Shadow should have been dropped"
   end
+
+  def test_rename_table_shadows_then_renames
+    conn = connect(branch_override: "feature/rename")
+
+    conn.execute("CREATE TABLE public.widgets (id serial PRIMARY KEY, name varchar)")
+    conn.execute("INSERT INTO public.widgets (name) VALUES ('gadget')")
+
+    conn.rename_table :widgets, :gadgets
+
+    # Public table should be untouched
+    assert table_exists_in_schema?(conn, "public", "widgets"),
+      "Public widgets should still exist"
+
+    # Branch should have gadgets (renamed from shadow), not widgets
+    assert table_exists_in_schema?(conn, "branch_feature_rename", "gadgets"),
+      "Renamed table should exist in branch schema"
+    refute table_exists_in_schema?(conn, "branch_feature_rename", "widgets"),
+      "Original name should not exist in branch schema"
+
+    # Data should be accessible via the new name
+    result = conn.select_value("SELECT name FROM gadgets LIMIT 1")
+    assert_equal "gadget", result
+  end
+
+  def test_shadow_preserves_foreign_key_to_public_table
+    conn = connect(branch_override: "feature/fk")
+
+    conn.execute("CREATE TABLE public.authors (id serial PRIMARY KEY, name varchar)")
+    conn.execute("INSERT INTO public.authors (name) VALUES ('alice')")
+    conn.execute(<<~SQL)
+      CREATE TABLE public.posts (
+        id serial PRIMARY KEY,
+        author_id integer REFERENCES public.authors(id),
+        title varchar
+      )
+    SQL
+    conn.execute("INSERT INTO public.posts (author_id, title) VALUES (1, 'hello')")
+
+    # Shadow posts by adding a column
+    conn.add_column :posts, :body, :text
+
+    assert table_exists_in_schema?(conn, "branch_feature_fk", "posts"),
+      "posts should be shadowed"
+
+    # Data should be intact
+    count = conn.select_value("SELECT count(*) FROM posts")
+    assert_equal 1, count
+
+    # Should be able to insert with valid FK
+    author_id = conn.select_value("SELECT id FROM authors LIMIT 1")
+    conn.execute("INSERT INTO posts (author_id, title, body) VALUES (#{author_id}, 'world', 'content')")
+    assert_equal 2, conn.select_value("SELECT count(*) FROM posts")
+  end
 end

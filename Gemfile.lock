@@ -4,6 +4,7 @@ PATH
     activerecord-postgresql-branched (0.1.0)
       activerecord (>= 7.1)
       pg
+      railties (>= 7.1)
 
 GEM
   remote: https://rubygems.org/
@@ -157,7 +158,6 @@ PLATFORMS
 DEPENDENCIES
   activerecord-postgresql-branched!
   minitest
-  railties (>= 7.1)
   rake
 
 CHECKSUMS

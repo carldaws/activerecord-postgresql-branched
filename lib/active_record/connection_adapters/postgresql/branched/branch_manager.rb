@@ -81,9 +81,16 @@ module ActiveRecord
             PREFIX + slug[0, max_slug] + "_" + hash
           end
 
-          def prune
-            git_branches = `git branch --list 2>/dev/null`.lines.map { |l| l.strip.delete_prefix("* ") }
-            active_schemas = git_branches.map { |b| self.class.sanitise(b) }.to_set
+          def prune(keep: nil)
+            active_schemas = if keep
+              Array(keep).map { |b| self.class.sanitise(b) }.to_set
+            else
+              git_branches = `git branch --list 2>/dev/null`.lines.map { |l| l.strip.delete_prefix("* ") }
+              if git_branches.empty?
+                raise "No git branches found. Pass branch names explicitly: prune(keep: ['main', 'feature/x'])"
+              end
+              git_branches.map { |b| self.class.sanitise(b) }.to_set
+            end
 
             all_branch_schemas = @connection.select_values(<<~SQL)
               SELECT schema_name FROM information_schema.schemata

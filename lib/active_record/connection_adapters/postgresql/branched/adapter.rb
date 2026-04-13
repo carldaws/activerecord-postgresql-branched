@@ -18,7 +18,6 @@ module ActiveRecord
             remove_index
             rename_index
             drop_table
-            rename_table
             change_table
             bulk_change_table
           ].freeze
@@ -39,6 +38,18 @@ module ActiveRecord
               @shadow&.call(table_name)
               super(table_name, *args, **kwargs, &block)
             end
+          end
+
+          # rename_table needs special handling: the shadow table's sequences
+          # live in public, but Rails' rename_table tries to rename them using
+          # the branch schema. The table and index renames succeed before the
+          # sequence rename fails, so we rescue the sequence error.
+          def rename_table(table_name, new_name, **options)
+            @shadow&.call(table_name)
+            super
+          rescue ActiveRecord::StatementInvalid => e
+            raise if @branch_manager.primary_branch?
+            raise unless e.cause.is_a?(PG::UndefinedTable)
           end
 
           attr_reader :branch_manager
