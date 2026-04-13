@@ -14,45 +14,52 @@ class SchemaDumperTest < Minitest::Test
 
   def test_dump_branch_with_new_table
     conn = connect(branch: "feature/dump")
-
-    conn.create_table :widgets do |t|
-      t.string :name
-      t.integer :price
-    end
+    conn.create_table(:widgets) { |t| t.string :name; t.integer :price }
 
     output = dump_schema(conn)
 
     assert_includes output, "create_table"
     assert_includes output, "widgets"
-    refute_includes output, "branch_", "Schema dump should not contain branch_ references"
+    refute_includes output, "branch_"
   end
 
   def test_dump_branch_with_shadowed_table
-    conn = connect(branch: "feature/dump2")
+    main_conn = connect(branch: "main")
+    main_conn.create_table(:users) { |t| t.string :name }
 
-    conn.execute("CREATE TABLE public.users (id serial PRIMARY KEY, name varchar)")
+    conn = reconnect(branch: "feature/dump2")
     conn.add_column :users, :bio, :string
 
     output = dump_schema(conn)
 
     assert_includes output, "users"
     assert_includes output, "bio"
-    refute_includes output, "branch_", "Schema dump should not contain branch_ references"
+    refute_includes output, "branch_"
   end
 
   def test_dump_includes_public_tables
-    conn = connect(branch: "feature/dump3")
+    main_conn = connect(branch: "main")
+    main_conn.create_table(:products) { |t| t.string :title }
 
-    conn.execute("CREATE TABLE public.products (id serial PRIMARY KEY, title varchar)")
-    conn.create_table :widgets do |t|
-      t.string :name
-    end
+    conn = reconnect(branch: "feature/dump3")
+    conn.create_table(:widgets) { |t| t.string :name }
 
     output = dump_schema(conn)
 
     assert_includes output, "products", "Public tables should appear in dump"
     assert_includes output, "widgets", "Branch tables should appear in dump"
     refute_includes output, "branch_"
+  end
+
+  def test_dump_on_primary_branch_is_standard
+    conn = connect(branch: "main")
+    conn.create_table(:products) { |t| t.string :title }
+
+    output = dump_schema(conn)
+
+    assert_includes output, "products"
+    refute_includes output, "branch_"
+    refute_includes output, "create_schema"
   end
 
   private

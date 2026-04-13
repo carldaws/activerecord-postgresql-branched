@@ -131,12 +131,21 @@ rails db:branch:console             # open psql with the branch search_path
 
 ## Configuration
 
-The adapter needs one thing: a branch name. Resolution order:
+```yaml
+development:
+  adapter: postgresql_branched
+  database: myapp_development
+  primary_branch: main        # default, can be 'master', 'trunk', etc.
+```
+
+The adapter needs a branch name. Resolution order:
 
 1. `PGBRANCH` environment variable
 2. `git branch --show-current` (automatic fallback)
 
 If neither is available, the adapter raises an error.
+
+On the **primary branch** (`main` by default), the adapter stands aside entirely. No branch schema is created. Migrations land directly in `public`. This is how the shared baseline advances — when you pull main and run `db:migrate`, the tables go to `public` where every feature branch can see them via `search_path` fallthrough.
 
 All standard PostgreSQL connection parameters work as normal (`host`, `port`, `username`, `password`, etc.).
 

@@ -13,9 +13,15 @@ module ActiveRecord
           end
 
           def activate(shadow)
+            return if primary_branch?
+
             ensure_schema
             set_search_path
             shadow_migration_tables(shadow)
+          end
+
+          def primary_branch?
+            @branch == primary_branch_name
           end
 
           def reset
@@ -26,6 +32,11 @@ module ActiveRecord
 
           def discard(branch_name = @branch)
             schema = self.class.sanitise(branch_name)
+
+            if schema == self.class.sanitise(primary_branch_name)
+              raise "Cannot discard the primary branch schema"
+            end
+
             @connection.execute("DROP SCHEMA IF EXISTS #{quote(schema)} CASCADE")
           end
 
@@ -45,6 +56,8 @@ module ActiveRecord
           end
 
           def diff
+            return [] if primary_branch?
+
             @connection.select_values(<<~SQL)
               SELECT table_name FROM information_schema.tables
               WHERE table_schema = #{@connection.quote(@branch_schema)}
@@ -105,6 +118,10 @@ module ActiveRecord
             end
 
             name
+          end
+
+          def primary_branch_name
+            (@config[:primary_branch] || "main").to_s
           end
 
           def ensure_schema

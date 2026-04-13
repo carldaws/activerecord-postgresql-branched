@@ -31,7 +31,7 @@ module ActiveRecord
           def initialize(...)
             super
             @branch_manager = BranchManager.new(self, @config)
-            @shadow = Shadow.new(self, @branch_manager.branch_schema)
+            @shadow = Shadow.new(self, @branch_manager.branch_schema) unless @branch_manager.primary_branch?
           end
 
           def configure_connection
@@ -41,7 +41,7 @@ module ActiveRecord
 
           SHADOW_BEFORE.each do |method|
             define_method(method) do |table_name, *args, **kwargs, &block|
-              @shadow.call(table_name)
+              @shadow&.call(table_name)
               super(table_name, *args, **kwargs, &block)
             end
           end
@@ -51,9 +51,10 @@ module ActiveRecord
           # the branch schema. The table and index renames succeed before the
           # sequence rename fails, so we rescue the sequence error.
           def rename_table(table_name, new_name, **options)
-            @shadow.call(table_name)
+            @shadow&.call(table_name)
             super
           rescue ActiveRecord::StatementInvalid => e
+            raise if @branch_manager.primary_branch?
             raise unless e.cause.is_a?(PG::UndefinedTable)
           end
 

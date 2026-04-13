@@ -3,7 +3,6 @@ require "active_record"
 require "activerecord-postgresql-branched"
 
 DATABASE_NAME = "pgb_test"
-DATABASE_URL = "postgres://localhost/#{DATABASE_NAME}"
 
 ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaDumper.prepend(
   ActiveRecord::ConnectionAdapters::PostgreSQL::Branched::SchemaDumperExtension
@@ -25,17 +24,19 @@ module PGBTestSupport
     ENV.delete("PGBRANCH")
   end
 
-  def connect(branch:)
+  def connect(branch:, primary_branch: "main")
     ENV["PGBRANCH"] = branch
     ActiveRecord::Base.establish_connection(
       adapter: "postgresql_branched",
-      database: DATABASE_NAME
+      database: DATABASE_NAME,
+      primary_branch: primary_branch
     )
     ActiveRecord::Base.lease_connection
   end
 
-  def raw_pg
-    PG.connect(dbname: DATABASE_NAME)
+  def reconnect(branch:, primary_branch: "main")
+    ActiveRecord::Base.connection_pool.disconnect!
+    connect(branch: branch, primary_branch: primary_branch)
   end
 
   def schema_exists?(connection, schema_name)
@@ -58,6 +59,34 @@ module PGBTestSupport
       WHERE table_schema = #{connection.quote(schema_name)}
         AND table_name = #{connection.quote(table_name)}
         AND column_name = #{connection.quote(column_name)}
+    SQL
+  end
+
+  def index_exists_in_schema?(connection, schema_name, index_name)
+    connection.select_value(<<~SQL) == 1
+      SELECT 1 FROM pg_indexes
+      WHERE schemaname = #{connection.quote(schema_name)}
+        AND indexname = #{connection.quote(index_name)}
+    SQL
+  end
+
+  def foreign_key_exists_in_schema?(connection, schema_name, table_name, constraint_name)
+    connection.select_value(<<~SQL) == 1
+      SELECT 1 FROM information_schema.table_constraints
+      WHERE constraint_schema = #{connection.quote(schema_name)}
+        AND table_name = #{connection.quote(table_name)}
+        AND constraint_type = 'FOREIGN KEY'
+        AND constraint_name = #{connection.quote(constraint_name)}
+    SQL
+  end
+
+  def check_constraint_exists_in_schema?(connection, schema_name, table_name, constraint_name)
+    connection.select_value(<<~SQL) == 1
+      SELECT 1 FROM information_schema.table_constraints
+      WHERE constraint_schema = #{connection.quote(schema_name)}
+        AND table_name = #{connection.quote(table_name)}
+        AND constraint_type = 'CHECK'
+        AND constraint_name = #{connection.quote(constraint_name)}
     SQL
   end
 end

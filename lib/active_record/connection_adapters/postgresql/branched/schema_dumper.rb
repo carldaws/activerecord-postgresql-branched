@@ -8,7 +8,8 @@ module ActiveRecord
           private
 
           def on_branch?
-            @connection.respond_to?(:branch_manager)
+            @connection.respond_to?(:branch_manager) &&
+              !@connection.branch_manager.primary_branch?
           end
 
           def initialize(connection, options = {})

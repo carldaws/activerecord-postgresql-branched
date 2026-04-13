@@ -9,6 +9,12 @@ module ActiveRecord
                 desc "Drop and recreate the current branch schema"
                 task reset: :load_config do
                   manager = branch_manager
+
+                  if manager.primary_branch?
+                    puts "On primary branch (#{manager.branch}), nothing to reset."
+                    next
+                  end
+
                   manager.reset
                   puts "Reset branch schema #{manager.branch_schema}. Run db:migrate to reapply branch migrations."
                 end
@@ -53,6 +59,12 @@ module ActiveRecord
                 desc "Show objects in the current branch schema"
                 task diff: :load_config do
                   manager = branch_manager
+
+                  if manager.primary_branch?
+                    puts "On primary branch, no diff."
+                    next
+                  end
+
                   tables = manager.diff
 
                   if tables.empty?
@@ -68,14 +80,18 @@ module ActiveRecord
                   manager = branch_manager
                   config = ActiveRecord::Base.connection_db_config.configuration_hash
 
-                  env = { "PGOPTIONS" => "-c search_path=#{manager.branch_schema},public" }
+                  env = {}
+                  unless manager.primary_branch?
+                    env["PGOPTIONS"] = "-c search_path=#{manager.branch_schema},public"
+                  end
+
                   args = ["psql"]
                   args.push("-h", config[:host].to_s) if config[:host]
                   args.push("-p", config[:port].to_s) if config[:port]
                   args.push("-U", config[:username].to_s) if config[:username]
                   args.push(config[:database].to_s)
 
-                  puts "Connecting to #{config[:database]} as #{manager.branch_schema}..."
+                  puts "Connecting to #{config[:database]}#{" as #{manager.branch_schema}" unless manager.primary_branch?}..."
                   exec(env, *args)
                 end
               end

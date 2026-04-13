@@ -5,6 +5,8 @@ class BranchManagerTest < Minitest::Test
 
   BranchManager = ActiveRecord::ConnectionAdapters::PostgreSQL::Branched::BranchManager
 
+  # --- Sanitisation ---
+
   def test_sanitise_simple_branch
     assert_equal "branch_main", BranchManager.sanitise("main")
   end
@@ -44,17 +46,25 @@ class BranchManagerTest < Minitest::Test
     base = "a" * 200
     schema_a = BranchManager.sanitise(base + "_alpha")
     schema_b = BranchManager.sanitise(base + "_bravo")
-    refute_equal schema_a, schema_b, "Different long branches must produce different schema names"
+    refute_equal schema_a, schema_b
   end
 
   def test_sanitise_short_names_are_not_truncated
-    schema = BranchManager.sanitise("feature/short")
-    assert_equal "branch_feature_short", schema
+    assert_equal "branch_feature_short", BranchManager.sanitise("feature/short")
+  end
+
+  # --- Branch resolution ---
+
+  def test_resolve_branch_from_pgbranch_env
+    ENV["PGBRANCH"] = "from-env"
+    assert_equal "from-env", BranchManager.resolve_branch_name
+  ensure
+    ENV.delete("PGBRANCH")
   end
 
   def test_empty_branch_raises
     setup_test_database
-    connect(branch: "anything")
+    connect(branch: "main")
     ActiveRecord::Base.connection_pool.disconnect!
 
     ENV["PGBRANCH"] = ""
@@ -70,12 +80,7 @@ class BranchManagerTest < Minitest::Test
     teardown_test_database
   end
 
-  def test_resolve_branch_from_pgbranch_env
-    ENV["PGBRANCH"] = "from-env"
-    assert_equal "from-env", BranchManager.resolve_branch_name
-  ensure
-    ENV.delete("PGBRANCH")
-  end
+  # --- Reset ---
 
   def test_reset_drops_and_recreates_schema
     setup_test_database
@@ -93,14 +98,14 @@ class BranchManagerTest < Minitest::Test
     teardown_test_database
   end
 
+  # --- Discard ---
+
   def test_discard_drops_schema
     setup_test_database
     conn = connect(branch: "feature/discard-test")
-    manager = conn.branch_manager
-
     assert schema_exists?(conn, "branch_feature_discard_test")
 
-    manager.discard
+    conn.branch_manager.discard
     refute schema_exists?(conn, "branch_feature_discard_test")
   ensure
     teardown_test_database
@@ -109,10 +114,7 @@ class BranchManagerTest < Minitest::Test
   def test_discard_other_branch_by_name
     setup_test_database
     conn = connect(branch: "feature/active")
-
-    # Create another branch schema manually
     conn.execute("CREATE SCHEMA IF NOT EXISTS branch_feature_stale")
-    assert schema_exists?(conn, "branch_feature_stale")
 
     conn.branch_manager.discard("feature/stale")
     refute schema_exists?(conn, "branch_feature_stale")
@@ -120,29 +122,25 @@ class BranchManagerTest < Minitest::Test
     teardown_test_database
   end
 
-  def test_list_returns_branch_schemas
+  def test_discard_prevents_dropping_primary_branch
     setup_test_database
-    conn = connect(branch: "feature/listed")
-    manager = conn.branch_manager
+    conn = connect(branch: "feature/safe")
 
-    conn.create_table(:widgets) { |t| t.string :name }
-    rows = manager.list
-
-    schema_names = rows.map(&:first)
-    assert_includes schema_names, "branch_feature_listed"
+    error = assert_raises(RuntimeError) { conn.branch_manager.discard("main") }
+    assert_match(/Cannot discard the primary branch/, error.message)
   ensure
     teardown_test_database
   end
 
-  def test_diff_returns_branch_local_tables
+  # --- List ---
+
+  def test_list_returns_branch_schemas
     setup_test_database
-    conn = connect(branch: "feature/diffed")
-    manager = conn.branch_manager
-
+    conn = connect(branch: "feature/listed")
     conn.create_table(:widgets) { |t| t.string :name }
-    tables = manager.diff
 
-    assert_includes tables, "widgets"
+    schema_names = conn.branch_manager.list.map(&:first)
+    assert_includes schema_names, "branch_feature_listed"
   ensure
     teardown_test_database
   end
@@ -150,24 +148,41 @@ class BranchManagerTest < Minitest::Test
   def test_list_works_with_empty_schema
     setup_test_database
     conn = connect(branch: "feature/empty")
-    manager = conn.branch_manager
 
-    rows = manager.list
-    schema_names = rows.map(&:first)
+    schema_names = conn.branch_manager.list.map(&:first)
     assert_includes schema_names, "branch_feature_empty"
   ensure
     teardown_test_database
   end
 
+  # --- Diff ---
+
+  def test_diff_returns_branch_local_tables
+    setup_test_database
+    conn = connect(branch: "feature/diffed")
+    conn.create_table(:widgets) { |t| t.string :name }
+
+    assert_includes conn.branch_manager.diff, "widgets"
+  ensure
+    teardown_test_database
+  end
+
+  def test_diff_returns_empty_on_primary_branch
+    setup_test_database
+    conn = connect(branch: "main")
+
+    assert_equal [], conn.branch_manager.diff
+  ensure
+    teardown_test_database
+  end
+
+  # --- Prune ---
+
   def test_prune_drops_schemas_not_in_keep_list
     setup_test_database
     conn = connect(branch: "feature/keeper")
-
     conn.execute("CREATE SCHEMA IF NOT EXISTS branch_feature_stale_one")
     conn.execute("CREATE SCHEMA IF NOT EXISTS branch_feature_stale_two")
-
-    assert schema_exists?(conn, "branch_feature_stale_one")
-    assert schema_exists?(conn, "branch_feature_stale_two")
 
     pruned = conn.branch_manager.prune(keep: ["feature/keeper"])
 
@@ -175,7 +190,7 @@ class BranchManagerTest < Minitest::Test
     assert_includes pruned, "branch_feature_stale_two"
     refute schema_exists?(conn, "branch_feature_stale_one")
     refute schema_exists?(conn, "branch_feature_stale_two")
-    assert schema_exists?(conn, "branch_feature_keeper"), "Kept branch schema should still exist"
+    assert schema_exists?(conn, "branch_feature_keeper")
   ensure
     teardown_test_database
   end
