@@ -117,7 +117,7 @@ rails db:branch:discard BRANCH=agent-0
 ## Rake tasks
 
 ```bash
-rails db:branch:reset              # drop and recreate current branch schema
+rails db:branch:reset               # drop and recreate current branch schema
 rails db:branch:discard             # drop current branch schema (or BRANCH=name)
 rails db:branch:list                # list all branch schemas and their sizes
 rails db:branch:diff                # show tables in the current branch schema
