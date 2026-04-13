@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name          = "activerecord-postgresql-branched"
-  spec.version       = "0.3.0"
+  spec.version       = "0.4.0"
   spec.authors       = ["Carl Dawson"]
   spec.summary       = "Branch-aware PostgreSQL adapter for ActiveRecord"
   spec.description   = "A Rails database adapter that gives each git branch its own Postgres schema. Migrations run in isolation. Nobody steps on anyone else's work."
