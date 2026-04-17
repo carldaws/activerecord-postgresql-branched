@@ -244,4 +244,153 @@ class ShadowTest < Minitest::Test
     conn.execute("INSERT INTO posts (author_id, title, body) VALUES (#{author_id}, 'world', 'content')")
     assert_equal 2, conn.select_value("SELECT count(*) FROM posts")
   end
+
+  # --- Bulk-load shadow preserves every structural detail ---
+  #
+  # These tests exist because the shadow now skips INCLUDING INDEXES during
+  # CREATE TABLE LIKE and rebuilds indexes after the data copy. They pin the
+  # contract that the branch table is structurally equivalent to public.
+
+  def test_shadow_preserves_primary_key_as_primary_key
+    conn = reconnect(branch: "feature/pk")
+    conn.add_column :users, :bio, :string
+
+    is_primary = conn.select_value(<<~SQL)
+      SELECT ix.indisprimary FROM pg_index ix
+        JOIN pg_class t ON t.oid = ix.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+      WHERE n.nspname = 'branch_feature_pk'
+        AND t.relname = 'users'
+        AND ix.indisprimary
+    SQL
+    assert_equal true, is_primary,
+      "Shadow must attach the pkey index as a PRIMARY KEY constraint, not just a unique index"
+  end
+
+  def test_shadow_primary_key_sequence_still_works
+    conn = reconnect(branch: "feature/pk-insert")
+    conn.add_column :users, :bio, :string
+
+    conn.execute("INSERT INTO users (name, legacy, bio) VALUES ('carol', 'old', 'hi')")
+    inserted_id = conn.select_value("SELECT id FROM users WHERE name = 'carol'")
+    refute_nil inserted_id, "Inserts into the shadow must auto-assign an id"
+  end
+
+  def test_shadow_preserves_unique_index
+    conn = connect(branch: "main")
+    conn.execute("CREATE UNIQUE INDEX users_name_uniq ON public.users (name)")
+
+    conn = reconnect(branch: "feature/uniq-idx")
+    conn.add_column :users, :bio, :string
+
+    assert index_exists_in_schema?(conn, "branch_feature_uniq_idx", "users_name_uniq")
+    is_unique = conn.select_value(<<~SQL)
+      SELECT ix.indisunique FROM pg_index ix
+        JOIN pg_class i ON i.oid = ix.indexrelid
+        JOIN pg_namespace n ON n.oid = i.relnamespace
+      WHERE n.nspname = 'branch_feature_uniq_idx' AND i.relname = 'users_name_uniq'
+    SQL
+    assert_equal true, is_unique, "Unique index must be rebuilt as unique"
+
+    assert_raises(ActiveRecord::RecordNotUnique) do
+      conn.execute("INSERT INTO users (name, legacy, bio) VALUES ('alice', 'new', 'dup')")
+    end
+  end
+
+  def test_shadow_preserves_non_unique_index
+    conn = connect(branch: "main")
+    conn.execute("CREATE INDEX users_legacy_idx ON public.users (legacy)")
+
+    conn = reconnect(branch: "feature/plain-idx")
+    conn.add_column :users, :bio, :string
+
+    assert index_exists_in_schema?(conn, "branch_feature_plain_idx", "users_legacy_idx")
+  end
+
+  def test_shadow_preserves_check_constraint
+    conn = connect(branch: "main")
+    conn.execute("ALTER TABLE public.orders ADD CONSTRAINT orders_amount_positive CHECK (amount > 0)")
+
+    conn = reconnect(branch: "feature/check")
+    conn.add_column :orders, :note, :string
+
+    assert check_constraint_exists_in_schema?(conn, "branch_feature_check", "orders", "orders_amount_positive")
+    assert_raises(ActiveRecord::StatementInvalid) do
+      conn.execute("INSERT INTO orders (status, amount, note) VALUES ('bad', -1, 'x')")
+    end
+  end
+
+  def test_shadow_preserves_not_null_and_default
+    conn = connect(branch: "main")
+    conn.execute("ALTER TABLE public.orders ALTER COLUMN status SET NOT NULL")
+    conn.execute("ALTER TABLE public.orders ALTER COLUMN status SET DEFAULT 'pending'")
+
+    conn = reconnect(branch: "feature/default")
+    conn.add_column :orders, :note, :string
+
+    is_not_null = conn.select_value(<<~SQL)
+      SELECT attnotnull FROM pg_attribute a
+        JOIN pg_class t ON t.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+      WHERE n.nspname = 'branch_feature_default'
+        AND t.relname = 'orders'
+        AND a.attname = 'status'
+    SQL
+    assert_equal true, is_not_null, "NOT NULL must survive shadow"
+
+    conn.execute("INSERT INTO orders (amount, note) VALUES (50, 'uses-default')")
+    status = conn.select_value("SELECT status FROM orders WHERE note = 'uses-default'")
+    assert_equal "pending", status, "Default must survive shadow"
+  end
+
+  def test_shadow_preserves_multi_column_index
+    conn = connect(branch: "main")
+    conn.execute("CREATE INDEX orders_status_amount ON public.orders (status, amount)")
+
+    conn = reconnect(branch: "feature/multi-col")
+    conn.add_column :orders, :note, :string
+
+    columns = conn.select_values(<<~SQL)
+      SELECT a.attname FROM pg_index ix
+        JOIN pg_class i ON i.oid = ix.indexrelid
+        JOIN pg_namespace n ON n.oid = i.relnamespace
+        JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = ANY(ix.indkey)
+      WHERE n.nspname = 'branch_feature_multi_col' AND i.relname = 'orders_status_amount'
+      ORDER BY array_position(ix.indkey, a.attnum)
+    SQL
+    assert_equal %w[status amount], columns, "Column order in multi-column index must be preserved"
+  end
+
+  def test_shadow_preserves_functional_and_partial_indexes
+    conn = connect(branch: "main")
+    # Functional and partial indexes give pg_get_indexdef more complex output —
+    # exactly the case where a naive " ON public." string replacement could go
+    # wrong. The rewrite must still target only the table qualifier.
+    conn.execute("CREATE INDEX users_lower_name ON public.users (lower(name))")
+    conn.execute("CREATE INDEX users_non_legacy ON public.users (name) WHERE legacy IS NULL")
+
+    conn = reconnect(branch: "feature/fn-idx")
+    conn.add_column :users, :bio, :string
+
+    assert index_exists_in_schema?(conn, "branch_feature_fn_idx", "users_lower_name")
+    assert index_exists_in_schema?(conn, "branch_feature_fn_idx", "users_non_legacy")
+  end
+
+  def test_shadow_preserves_indexes_on_quoted_table_name
+    # A table whose name happens to need SQL quoting (capital letters, reserved
+    # word, etc.) surfaces quoting bugs in the index-rewrite path. pg_get_indexdef
+    # quotes only when necessary; the adapter's Ruby-side quoting always does.
+    # Mismatched expectations here made the first take on this rewrite fail.
+    conn = connect(branch: "main")
+    conn.execute('CREATE TABLE public."User" (id serial PRIMARY KEY, email varchar)')
+    conn.execute('CREATE INDEX user_email_idx ON public."User" (email)')
+    conn.execute("INSERT INTO public.\"User\" (email) VALUES ('a@x.com')")
+
+    conn = reconnect(branch: "feature/quoted-name")
+    conn.add_column "User", :bio, :string
+
+    assert table_exists_in_schema?(conn, "branch_feature_quoted_name", "User")
+    assert index_exists_in_schema?(conn, "branch_feature_quoted_name", "user_email_idx")
+    assert_equal 1, conn.select_value('SELECT count(*) FROM "User"')
+  end
 end
