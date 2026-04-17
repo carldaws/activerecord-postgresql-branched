@@ -24,19 +24,30 @@ module PGBTestSupport
     ENV.delete("PGBRANCH")
   end
 
-  def connect(branch:, primary_branch: "main")
+  def connect(branch:, primary_branch: "main", unlogged_branches: nil)
     ENV["PGBRANCH"] = branch
-    ActiveRecord::Base.establish_connection(
+    config = {
       adapter: "postgresql_branched",
       database: DATABASE_NAME,
       primary_branch: primary_branch
-    )
+    }
+    config[:unlogged_branches] = unlogged_branches unless unlogged_branches.nil?
+    ActiveRecord::Base.establish_connection(config)
     ActiveRecord::Base.lease_connection
   end
 
-  def reconnect(branch:, primary_branch: "main")
+  def reconnect(branch:, primary_branch: "main", unlogged_branches: nil)
     ActiveRecord::Base.connection_pool.disconnect!
-    connect(branch: branch, primary_branch: primary_branch)
+    connect(branch: branch, primary_branch: primary_branch, unlogged_branches: unlogged_branches)
+  end
+
+  def relpersistence(connection, schema_name, table_name)
+    connection.select_value(<<~SQL)
+      SELECT relpersistence FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = #{connection.quote(schema_name)}
+        AND c.relname = #{connection.quote(table_name)}
+    SQL
   end
 
   def schema_exists?(connection, schema_name)

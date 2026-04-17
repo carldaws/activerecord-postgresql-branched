@@ -136,6 +136,7 @@ development:
   adapter: postgresql_branched
   database: myapp_development
   primary_branch: main        # default, can be 'master', 'trunk', etc.
+  unlogged_branches: false    # default; set to true to shadow tables UNLOGGED
 ```
 
 The adapter needs a branch name. Resolution order:
@@ -150,6 +151,15 @@ On the **primary branch** (`main` by default), the adapter stands aside entirely
 All standard PostgreSQL connection parameters work as normal (`host`, `port`, `username`, `password`, etc.).
 
 **Do not set `schema_search_path` in database.yml** — it conflicts with the adapter's `search_path` management.
+
+### Unlogged branch shadows
+
+Set `unlogged_branches: true` to create shadow tables as Postgres `UNLOGGED`. WAL is skipped for shadow writes, which reduces disk pressure on large prod-restored dev databases and shortens shadow time on slow storage.
+
+Branch schemas are disposable by design — `db:branch:reset` rebuilds them from `public` — so the crash-loss semantics of UNLOGGED are a good match for dev/test. Two caveats:
+
+- A foreign key added on a feature branch (`add_foreign_key :shadowed, :public_only_table`) fails when the shadow is UNLOGGED and the referenced table is still LOGGED in `public`. Either shadow the reference first, or turn the option off.
+- If Postgres crashes, all shadow tables are truncated and you re-run `db:branch:reset` + `db:migrate`. No worse than switching branches.
 
 ## Limitations
 

@@ -393,4 +393,65 @@ class ShadowTest < Minitest::Test
     assert index_exists_in_schema?(conn, "branch_feature_quoted_name", "user_email_idx")
     assert_equal 1, conn.select_value('SELECT count(*) FROM "User"')
   end
+
+  # --- unlogged_branches option ---
+  #
+  # pg_class.relpersistence values:
+  #   'p' = permanent (default), 'u' = unlogged, 't' = temporary
+
+  def test_shadow_is_logged_by_default
+    conn = reconnect(branch: "feature/logged")
+    conn.add_column :users, :bio, :string
+
+    assert_equal "p", relpersistence(conn, "branch_feature_logged", "users")
+  end
+
+  def test_shadow_is_unlogged_when_enabled
+    conn = reconnect(branch: "feature/unlogged", unlogged_branches: true)
+    conn.add_column :users, :bio, :string
+
+    assert_equal "u", relpersistence(conn, "branch_feature_unlogged", "users")
+  end
+
+  def test_unlogged_shadow_still_has_primary_key_and_data
+    conn = reconnect(branch: "feature/unlogged-pk", unlogged_branches: true)
+    conn.add_column :users, :bio, :string
+
+    assert_equal 2, conn.select_value("SELECT count(*) FROM users"),
+      "Unlogged shadow must still copy data"
+    is_primary = conn.select_value(<<~SQL)
+      SELECT ix.indisprimary FROM pg_index ix
+        JOIN pg_class t ON t.oid = ix.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+      WHERE n.nspname = 'branch_feature_unlogged_pk'
+        AND t.relname = 'users'
+        AND ix.indisprimary
+    SQL
+    assert_equal true, is_primary, "Unlogged shadow must keep the PK designation"
+  end
+
+  def test_unlogged_indexes_inherit_unlogged_status
+    conn = connect(branch: "main")
+    conn.execute("CREATE INDEX users_name_idx ON public.users (name)")
+
+    conn = reconnect(branch: "feature/unlogged-idx", unlogged_branches: true)
+    conn.add_column :users, :bio, :string
+
+    index_persistence = conn.select_value(<<~SQL)
+      SELECT c.relpersistence FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'branch_feature_unlogged_idx'
+        AND c.relname = 'users_name_idx'
+    SQL
+    assert_equal "u", index_persistence,
+      "Indexes on unlogged tables must themselves be unlogged"
+  end
+
+  def test_unlogged_option_is_ignored_on_primary_branch
+    conn = reconnect(branch: "main", unlogged_branches: true)
+    conn.add_column :users, :bio, :string
+
+    assert_equal "p", relpersistence(conn, "public", "users"),
+      "Primary branch must never create UNLOGGED tables — public holds the canonical data"
+  end
 end

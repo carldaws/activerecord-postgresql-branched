@@ -3,9 +3,10 @@ module ActiveRecord
     module PostgreSQL
       module Branched
         class Shadow
-          def initialize(connection, branch_schema)
+          def initialize(connection, branch_schema, unlogged: false)
             @connection = connection
             @branch_schema = branch_schema
+            @unlogged = unlogged
           end
 
           def call(table_name)
@@ -48,9 +49,14 @@ module ActiveRecord
           # row. EXCLUDING INDEXES lets the bulk copy run without index
           # overhead; clone_indexes rebuilds them afterwards in a single
           # sort pass per index, the standard Postgres bulk-load pattern.
+          #
+          # UNLOGGED (when enabled) skips WAL for both the bulk copy and
+          # subsequent writes. Branch schemas are disposable by design —
+          # `db:branch:reset` rebuilds them from public — so the crash-loss
+          # semantics of UNLOGGED are a good fit for dev/test.
           def clone_structure(quoted_branch, quoted_table)
             @connection.execute(<<~SQL)
-              CREATE TABLE #{quoted_branch}.#{quoted_table}
+              CREATE #{"UNLOGGED " if @unlogged}TABLE #{quoted_branch}.#{quoted_table}
                 (LIKE public.#{quoted_table} INCLUDING ALL EXCLUDING INDEXES)
             SQL
           end

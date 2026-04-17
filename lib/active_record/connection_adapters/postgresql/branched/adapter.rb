@@ -31,7 +31,13 @@ module ActiveRecord
           def initialize(...)
             super
             @branch_manager = BranchManager.new(self, @config)
-            @shadow = Shadow.new(self, @branch_manager.branch_schema) unless @branch_manager.primary_branch?
+            return if @branch_manager.primary_branch?
+
+            @shadow = Shadow.new(
+              self,
+              @branch_manager.branch_schema,
+              unlogged: @config.fetch(:unlogged_branches, false)
+            )
           end
 
           def configure_connection
