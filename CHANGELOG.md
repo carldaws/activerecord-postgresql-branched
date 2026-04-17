@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Optimise shadow table creation: defer index builds until after bulk data copy (2–3x faster on indexed tables) — thanks @mhenrixon
+
 ## 0.4.0
 
 - Restore primary branch — the primary branch (default: `main`) writes to `public` so feature branches see shared state via `search_path` fallthrough
