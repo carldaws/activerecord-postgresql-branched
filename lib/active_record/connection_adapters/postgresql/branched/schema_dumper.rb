@@ -27,7 +27,7 @@ module ActiveRecord
 
             table_names = @connection.tables.uniq.sort
             table_names.reject! { |t| ignored?(t) }
-            table_names.reject! { |t| @connection.shadow&.dropped?(t) }
+            table_names.reject! { |t| @connection.table_dropped_on_branch?(t) }
 
             table_names.each_with_index do |table_name, index|
               table(table_name, stream)

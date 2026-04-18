@@ -3,10 +3,12 @@ module ActiveRecord
     module PostgreSQL
       module Branched
         class Shadow
+          DROPPED_SUFFIX = "__dropped"
+
           def initialize(connection, branch_schema)
             @connection = connection
             @branch_schema = branch_schema
-            @dropped_schema = "#{branch_schema}__dropped"
+            @dropped_schema = "#{branch_schema}#{DROPPED_SUFFIX}"
           end
 
           attr_reader :dropped_schema
@@ -55,6 +57,7 @@ module ActiveRecord
           end
 
           def undrop_table(table)
+            table = table.to_s
             return unless dropped?(table)
             quoted_dropped = @connection.quote_column_name(@dropped_schema)
             quoted_table = @connection.quote_column_name(table)
@@ -117,12 +120,8 @@ module ActiveRecord
             clone_constraints(table, quoted_branch, quoted_table)
           end
 
-          # Per-row index maintenance during INSERT SELECT dominates the cost
-          # of shadowing large tables. LIKE ... INCLUDING ALL builds every
-          # index up front, then the data copy updates each index for every
-          # row. EXCLUDING INDEXES lets the bulk copy run without index
-          # overhead; clone_indexes rebuilds them afterwards in a single
-          # sort pass per index, the standard Postgres bulk-load pattern.
+          # Structure without indexes — they're rebuilt after the bulk
+          # data copy for better performance (sort-based vs per-row).
           def clone_structure(quoted_branch, quoted_table)
             @connection.execute(<<~SQL)
               CREATE TABLE #{quoted_branch}.#{quoted_table}

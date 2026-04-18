@@ -31,7 +31,7 @@ module ActiveRecord
           # Everything else with a table param gets the generic wrapper.
           # Shadow#call is idempotent — if the table doesn't exist in
           # public or is already shadowed, it's a no-op.
-          SHADOW_BEFORE = Branched.table_methods.-(SHADOW_SKIP).-(SHADOW_HANDLED).freeze
+          SHADOW_BEFORE = (Branched.table_methods - SHADOW_SKIP - SHADOW_HANDLED).freeze
 
           def initialize(...)
             super
@@ -51,11 +51,8 @@ module ActiveRecord
             end
           end
 
-          # drop_table takes *table_names (splat) in Rails 8.1+.
-          # For tables from public: shadow first (so the branch copy
-          # exists for DROP to resolve to), then super drops the branch
-          # copy, then create a tombstone in the dropped schema to block
-          # search_path fallthrough.
+          # Shadow each table so DROP resolves to the branch copy, then
+          # create a tombstone in the dropped schema to block fallthrough.
           def drop_table(*table_names, **options)
             if @branch_manager.primary_branch?
               super
@@ -95,7 +92,11 @@ module ActiveRecord
             raise unless e.cause.is_a?(PG::UndefinedTable)
           end
 
-          attr_reader :branch_manager, :shadow
+          attr_reader :branch_manager
+
+          def table_dropped_on_branch?(table_name)
+            @shadow&.dropped?(table_name) || false
+          end
         end
       end
     end

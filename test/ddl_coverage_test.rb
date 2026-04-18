@@ -367,10 +367,8 @@ class DdlCoverageTest < Minitest::Test
     conn = reconnect(branch: "feature/drop-reshadow")
     conn.drop_table :orders
 
-    # After dropping on a branch, Shadow#call must not re-shadow the
-    # table (e.g. via a read-only method that triggers the wrapper).
-    # The table still falls through to public via search_path, but
-    # the schema dumper will exclude it.
+    # Shadow#call must not re-shadow a dropped table. The tombstone
+    # in the dropped schema blocks search_path fallthrough to public.
     conn.add_column :users, :bio, :string  # triggers shadow machinery
 
     refute table_exists_in_schema?(conn, "branch_feature_drop_reshadow", "orders"),

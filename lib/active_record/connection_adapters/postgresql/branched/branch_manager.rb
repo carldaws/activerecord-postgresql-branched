@@ -133,7 +133,7 @@ module ActiveRecord
           end
 
           def set_search_path
-            dropped_schema = "#{@branch_schema}__dropped"
+            dropped_schema = "#{@branch_schema}#{Shadow::DROPPED_SUFFIX}"
             @connection.schema_search_path = "#{dropped_schema}, #{@branch_schema}, public"
           end
 
