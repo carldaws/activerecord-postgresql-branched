@@ -482,7 +482,58 @@ class DdlCoverageTest < Minitest::Test
     assert_equal public_count, branch_count, "Shadow must copy all rows"
   end
 
+  # --- Meta: ensure every DDL method has a test ---
+
+  TABLE_PARAMS = %i[table_name from_table table_1].freeze
+
+  # Methods that don't need their own test — either aliases of tested
+  # methods, internal helpers, or read-only queries.
+  SKIP_COVERAGE = %i[
+    add_belongs_to remove_belongs_to
+    add_index_options
+    build_add_column_definition build_change_column_default_definition
+    build_change_column_definition build_create_index_definition
+    build_create_join_table_definition build_create_table_definition
+    check_constraint_exists? check_constraint_options check_constraints
+    column_exists? columns
+    default_sequence_name disable_index enable_index
+    exclusion_constraint_options exclusion_constraints
+    foreign_key_column_for foreign_key_exists? foreign_key_options foreign_keys
+    foreign_table_exists?
+    index_exists? index_name index_name_exists? indexes
+    inherited_table_names
+    primary_key primary_keys
+    table_alias_for table_comment table_exists? table_options table_partition_definition
+    unique_constraint_options unique_constraints
+    update_table_definition
+  ].freeze
+
+  def test_every_ddl_method_has_coverage
+    test_names = self.class.instance_methods(false).grep(/\Atest_/).map(&:to_s)
+    untested = table_methods - SKIP_COVERAGE
+
+    untested.reject! do |method|
+      test_names.any? { |t| t == "test_#{method}" || t.start_with?("test_#{method}_") }
+    end
+
+    assert_empty untested,
+      "DDL methods without test coverage: #{untested.sort.join(', ')}. " \
+      "Add a test or add to SKIP_COVERAGE with a reason."
+  end
+
   private
+
+  def table_methods
+    [
+      ActiveRecord::ConnectionAdapters::SchemaStatements,
+      ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaStatements
+    ].flat_map { |mod|
+      mod.instance_methods(false).select { |m|
+        first_param = mod.instance_method(m).parameters.first
+        first_param && TABLE_PARAMS.include?(first_param.last)
+      }
+    }.uniq
+  end
 
   def foreign_key_exists_on_branch?(conn, schema, from_table, to_table)
     conn.select_value(<<~SQL) == 1
