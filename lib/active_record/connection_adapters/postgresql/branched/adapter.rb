@@ -73,6 +73,16 @@ module ActiveRecord
             super
           end
 
+          # Enum DDL resolves unqualified type names through search_path,
+          # so modifications on a feature branch would otherwise mutate
+          # public. Shadow the enum into the branch schema first.
+          %i[drop_enum rename_enum add_enum_value rename_enum_value].each do |method|
+            define_method(method) do |name, *args, **kwargs, &block|
+              @shadow&.shadow_enum(name)
+              super(name, *args, **kwargs, &block)
+            end
+          end
+
           # rename_table needs special handling: the shadow table's sequences
           # live in public, but Rails' rename_table tries to rename them using
           # the branch schema. The table and index renames succeed before the

@@ -483,6 +483,106 @@ class DdlCoverageTest < Minitest::Test
     assert_equal public_count, branch_count, "Shadow must copy all rows"
   end
 
+  # --- Enum DDL ---
+
+  def test_create_enum
+    conn = reconnect(branch: "feature/create-enum")
+    conn.create_enum :status, %w[draft published]
+
+    values = conn.select_values(<<~SQL)
+      SELECT e.enumlabel FROM pg_enum e
+        JOIN pg_type t ON t.oid = e.enumtypid
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE t.typname = 'status'
+        AND n.nspname = 'branch_feature_create_enum'
+      ORDER BY e.enumsortorder
+    SQL
+    assert_equal %w[draft published], values
+  end
+
+  def test_drop_enum
+    conn = connect(branch: "main")
+    conn.create_enum :status, %w[draft published]
+
+    conn = reconnect(branch: "feature/drop-enum")
+    conn.drop_enum :status
+
+    # Public enum must survive
+    assert enum_exists_in_schema?(conn, "public", "status")
+    # Branch enum should be gone
+    refute enum_exists_in_schema?(conn, "branch_feature_drop_enum", "status")
+  end
+
+  def test_add_enum_value
+    conn = connect(branch: "main")
+    conn.create_enum :status, %w[draft published]
+
+    conn = reconnect(branch: "feature/add-enum-val")
+    conn.add_enum_value :status, "archived"
+
+    branch_values = conn.select_values(<<~SQL)
+      SELECT e.enumlabel FROM pg_enum e
+        JOIN pg_type t ON t.oid = e.enumtypid
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE t.typname = 'status'
+        AND n.nspname = 'branch_feature_add_enum_val'
+      ORDER BY e.enumsortorder
+    SQL
+    assert_includes branch_values, "archived"
+
+    public_values = conn.select_values(<<~SQL)
+      SELECT e.enumlabel FROM pg_enum e
+        JOIN pg_type t ON t.oid = e.enumtypid
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE t.typname = 'status'
+        AND n.nspname = 'public'
+      ORDER BY e.enumsortorder
+    SQL
+    refute_includes public_values, "archived"
+  end
+
+  def test_rename_enum
+    conn = connect(branch: "main")
+    conn.create_enum :status, %w[draft published]
+
+    conn = reconnect(branch: "feature/ren-enum")
+    conn.rename_enum :status, :article_status
+
+    assert enum_exists_in_schema?(conn, "branch_feature_ren_enum", "article_status")
+    assert enum_exists_in_schema?(conn, "public", "status"),
+      "Public enum must keep original name"
+  end
+
+  def test_rename_enum_value
+    conn = connect(branch: "main")
+    conn.create_enum :status, %w[draft published]
+
+    conn = reconnect(branch: "feature/ren-enum-val")
+    conn.rename_enum_value :status, from: "draft", to: "pending"
+
+    branch_values = conn.select_values(<<~SQL)
+      SELECT e.enumlabel FROM pg_enum e
+        JOIN pg_type t ON t.oid = e.enumtypid
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE t.typname = 'status'
+        AND n.nspname = 'branch_feature_ren_enum_val'
+      ORDER BY e.enumsortorder
+    SQL
+    assert_includes branch_values, "pending"
+    refute_includes branch_values, "draft"
+
+    public_values = conn.select_values(<<~SQL)
+      SELECT e.enumlabel FROM pg_enum e
+        JOIN pg_type t ON t.oid = e.enumtypid
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE t.typname = 'status'
+        AND n.nspname = 'public'
+      ORDER BY e.enumsortorder
+    SQL
+    assert_includes public_values, "draft",
+      "Public enum values must be untouched"
+  end
+
   # --- Meta: ensure every DDL method has a test ---
 
   # Methods that don't need their own test — either aliases of tested
@@ -533,6 +633,16 @@ class DdlCoverageTest < Minitest::Test
         AND n.nspname = #{conn.quote(schema)}
         AND t.relname = #{conn.quote(from_table)}
         AND ref.relname = #{conn.quote(to_table)}
+    SQL
+  end
+
+  def enum_exists_in_schema?(conn, schema, enum_name)
+    conn.select_value(<<~SQL) == 1
+      SELECT 1 FROM pg_type t
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE n.nspname = #{conn.quote(schema)}
+        AND t.typname = #{conn.quote(enum_name.to_s)}
+        AND t.typtype = 'e'
     SQL
   end
 

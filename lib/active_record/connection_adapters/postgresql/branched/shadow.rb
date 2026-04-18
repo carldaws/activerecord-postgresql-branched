@@ -20,6 +20,27 @@ module ActiveRecord
             create_shadow(table)
           end
 
+          def shadow_enum(name)
+            name = name.to_s
+            return unless enum_exists_in_public?(name)
+            return if enum_exists_in_branch?(name)
+
+            labels = @connection.select_values(<<~SQL)
+              SELECT e.enumlabel FROM pg_enum e
+                JOIN pg_type t ON t.oid = e.enumtypid
+                JOIN pg_namespace n ON n.oid = t.typnamespace
+              WHERE n.nspname = 'public' AND t.typname = #{@connection.quote(name)}
+              ORDER BY e.enumsortorder
+            SQL
+
+            quoted_branch = @connection.quote_column_name(@branch_schema)
+            quoted_labels = labels.map { |l| @connection.quote(l) }.join(", ")
+            @connection.execute(<<~SQL)
+              CREATE TYPE #{quoted_branch}.#{@connection.quote_column_name(name)}
+                AS ENUM (#{quoted_labels})
+            SQL
+          end
+
           def drop_table(table)
             table = table.to_s
             return unless exists_in_public?(table)
@@ -49,6 +70,22 @@ module ActiveRecord
           end
 
           private
+
+          def enum_exists_in_public?(name)
+            @connection.select_value(<<~SQL) == 1
+              SELECT 1 FROM pg_type t
+                JOIN pg_namespace n ON n.oid = t.typnamespace
+              WHERE n.nspname = 'public' AND t.typname = #{@connection.quote(name)} AND t.typtype = 'e'
+            SQL
+          end
+
+          def enum_exists_in_branch?(name)
+            @connection.select_value(<<~SQL) == 1
+              SELECT 1 FROM pg_type t
+                JOIN pg_namespace n ON n.oid = t.typnamespace
+              WHERE n.nspname = #{@connection.quote(@branch_schema)} AND t.typname = #{@connection.quote(name)} AND t.typtype = 'e'
+            SQL
+          end
 
           def ensure_dropped_schema
             quoted = @connection.quote_column_name(@dropped_schema)
