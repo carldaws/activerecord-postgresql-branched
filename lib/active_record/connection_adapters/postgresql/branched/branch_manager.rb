@@ -133,7 +133,8 @@ module ActiveRecord
           end
 
           def set_search_path
-            @connection.schema_search_path = "#{@branch_schema}, public"
+            dropped_schema = "#{@branch_schema}#{Shadow::DROPPED_SUFFIX}"
+            @connection.schema_search_path = "#{dropped_schema}, #{@branch_schema}, public"
           end
 
           def shadow_migration_tables(shadow)

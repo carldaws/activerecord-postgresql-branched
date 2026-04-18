@@ -3,20 +3,97 @@ module ActiveRecord
     module PostgreSQL
       module Branched
         class Shadow
+          DROPPED_SUFFIX = "__dropped"
+
           def initialize(connection, branch_schema)
             @connection = connection
             @branch_schema = branch_schema
+            @dropped_schema = "#{branch_schema}#{DROPPED_SUFFIX}"
           end
+
+          attr_reader :dropped_schema
 
           def call(table_name)
             table = table_name.to_s
             return unless exists_in_public?(table)
             return if already_shadowed?(table)
+            return if dropped?(table)
 
             create_shadow(table)
           end
 
+          def shadow_enum(name)
+            name = name.to_s
+            return unless enum_exists_in_public?(name)
+            return if enum_exists_in_branch?(name)
+
+            labels = @connection.select_values(<<~SQL)
+              SELECT e.enumlabel FROM pg_enum e
+                JOIN pg_type t ON t.oid = e.enumtypid
+                JOIN pg_namespace n ON n.oid = t.typnamespace
+              WHERE n.nspname = 'public' AND t.typname = #{@connection.quote(name)}
+              ORDER BY e.enumsortorder
+            SQL
+
+            quoted_branch = @connection.quote_column_name(@branch_schema)
+            quoted_labels = labels.map { |l| @connection.quote(l) }.join(", ")
+            @connection.execute(<<~SQL)
+              CREATE TYPE #{quoted_branch}.#{@connection.quote_column_name(name)}
+                AS ENUM (#{quoted_labels})
+            SQL
+          end
+
+          def drop_table(table)
+            table = table.to_s
+            return unless exists_in_public?(table)
+
+            ensure_dropped_schema
+            quoted_dropped = @connection.quote_column_name(@dropped_schema)
+            quoted_table = @connection.quote_column_name(table)
+            @connection.execute(<<~SQL)
+              CREATE TABLE #{quoted_dropped}.#{quoted_table}
+                (LIKE public.#{quoted_table})
+            SQL
+          end
+
+          def undrop_table(table)
+            table = table.to_s
+            return unless dropped?(table)
+            quoted_dropped = @connection.quote_column_name(@dropped_schema)
+            quoted_table = @connection.quote_column_name(table)
+            @connection.execute("DROP TABLE #{quoted_dropped}.#{quoted_table}")
+          end
+
+          def dropped?(table_name)
+            @connection.select_value(<<~SQL) == 1
+              SELECT 1 FROM information_schema.tables
+              WHERE table_schema = #{@connection.quote(@dropped_schema)}
+                AND table_name = #{@connection.quote(table_name.to_s)}
+            SQL
+          end
+
           private
+
+          def enum_exists_in_public?(name)
+            @connection.select_value(<<~SQL) == 1
+              SELECT 1 FROM pg_type t
+                JOIN pg_namespace n ON n.oid = t.typnamespace
+              WHERE n.nspname = 'public' AND t.typname = #{@connection.quote(name)} AND t.typtype = 'e'
+            SQL
+          end
+
+          def enum_exists_in_branch?(name)
+            @connection.select_value(<<~SQL) == 1
+              SELECT 1 FROM pg_type t
+                JOIN pg_namespace n ON n.oid = t.typnamespace
+              WHERE n.nspname = #{@connection.quote(@branch_schema)} AND t.typname = #{@connection.quote(name)} AND t.typtype = 'e'
+            SQL
+          end
+
+          def ensure_dropped_schema
+            quoted = @connection.quote_column_name(@dropped_schema)
+            @connection.execute("CREATE SCHEMA IF NOT EXISTS #{quoted}")
+          end
 
           def exists_in_public?(table)
             @connection.select_value(<<~SQL) == 1
@@ -40,14 +117,11 @@ module ActiveRecord
             clone_structure(quoted_branch, quoted_table)
             copy_data(quoted_branch, quoted_table)
             clone_indexes(table, quoted_branch, quoted_table)
+            clone_constraints(table, quoted_branch, quoted_table)
           end
 
-          # Per-row index maintenance during INSERT SELECT dominates the cost
-          # of shadowing large tables. LIKE ... INCLUDING ALL builds every
-          # index up front, then the data copy updates each index for every
-          # row. EXCLUDING INDEXES lets the bulk copy run without index
-          # overhead; clone_indexes rebuilds them afterwards in a single
-          # sort pass per index, the standard Postgres bulk-load pattern.
+          # Structure without indexes — they're rebuilt after the bulk
+          # data copy for better performance (sort-based vs per-row).
           def clone_structure(quoted_branch, quoted_table)
             @connection.execute(<<~SQL)
               CREATE TABLE #{quoted_branch}.#{quoted_table}
@@ -76,10 +150,11 @@ module ActiveRecord
             end
           end
 
-          # Redirect pg_get_indexdef output from public to the branch schema.
-          # The REPLACE uses the same quote_ident() that pg_get_indexdef uses
-          # to emit identifiers, so the anchor always matches regardless of
-          # whether the table name needs quoting.
+          # LIKE ... INCLUDING ALL EXCLUDING INDEXES drops all index-backed
+          # constraints (PK, unique, exclusion). clone_constraints re-emits
+          # unique and exclusion constraints which implicitly create their
+          # backing indexes, so we skip those here to avoid name collisions.
+          # PK indexes are rebuilt and reattached via USING INDEX.
           def index_metadata(table)
             @connection.select_rows(<<~SQL)
               SELECT i.relname, ix.indisprimary,
@@ -94,6 +169,40 @@ module ActiveRecord
                 JOIN pg_namespace n ON n.oid = t.relnamespace
               WHERE n.nspname = 'public'
                 AND t.relname = #{@connection.quote(table)}
+                AND NOT EXISTS (
+                  SELECT 1 FROM pg_constraint c
+                  WHERE c.conindid = ix.indexrelid
+                    AND c.contype IN ('x', 'u')
+                )
+            SQL
+          end
+
+          # LIKE ... INCLUDING CONSTRAINTS copies check constraints and NOT
+          # NULL but never foreign keys (Postgres design). EXCLUDING INDEXES
+          # also drops exclusion and unique constraints since they're index-
+          # backed. Re-emit each from pg_constraint; the definitions from
+          # pg_get_constraintdef are self-contained and resolve correctly
+          # via the branch search_path without rewriting.
+          def clone_constraints(table, quoted_branch, quoted_table)
+            constraint_definitions(table).each do |conname, condef|
+              quoted_con = @connection.quote_column_name(conname)
+              @connection.execute(<<~SQL)
+                ALTER TABLE #{quoted_branch}.#{quoted_table}
+                  ADD CONSTRAINT #{quoted_con} #{condef}
+              SQL
+            end
+          end
+
+          def constraint_definitions(table)
+            @connection.select_rows(<<~SQL)
+              SELECT c.conname, pg_get_constraintdef(c.oid, true)
+              FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+              WHERE n.nspname = 'public'
+                AND t.relname = #{@connection.quote(table)}
+                AND c.contype IN ('f', 'x', 'u')
+              ORDER BY c.conname
             SQL
           end
         end

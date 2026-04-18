@@ -2,31 +2,36 @@ module ActiveRecord
   module ConnectionAdapters
     module PostgreSQL
       module Branched
+        # All SchemaStatements methods whose first parameter name
+        # contains "table" — covers table_name, from_table, table_1,
+        # table_names, and any future variant.
+        def self.table_methods
+          [
+            ActiveRecord::ConnectionAdapters::SchemaStatements,
+            ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaStatements
+          ].flat_map { |mod|
+            mod.instance_methods(false).select { |m|
+              first_param = mod.instance_method(m).parameters.first
+              first_param && first_param.last.to_s.include?("table")
+            }
+          }.uniq
+        end
+
         class Adapter < ActiveRecord::ConnectionAdapters::PostgreSQLAdapter
           ADAPTER_NAME = "PostgreSQL Branched"
 
-          SHADOW_BEFORE = %i[
-            add_column
-            remove_column
-            rename_column
-            change_column
-            change_column_default
-            change_column_null
-            change_column_comment
-            change_table_comment
-            add_index
-            remove_index
-            rename_index
-            add_foreign_key
-            remove_foreign_key
-            add_check_constraint
-            remove_check_constraint
-            validate_foreign_key
-            validate_check_constraint
-            drop_table
-            change_table
-            bulk_change_table
-          ].freeze
+          # Methods where the first argument is not the table to shadow,
+          # or where shadowing would be wasteful (join table methods pass
+          # table_1, not the derived join table name).
+          SHADOW_SKIP = %i[create_join_table drop_join_table].freeze
+
+          # Methods with custom shadow handling outside the generic loop.
+          SHADOW_HANDLED = %i[rename_table].freeze
+
+          # Everything else with a table param gets the generic wrapper.
+          # Shadow#call is idempotent — if the table doesn't exist in
+          # public or is already shadowed, it's a no-op.
+          SHADOW_BEFORE = (Branched.table_methods - SHADOW_SKIP - SHADOW_HANDLED).freeze
 
           def initialize(...)
             super
@@ -40,9 +45,38 @@ module ActiveRecord
           end
 
           SHADOW_BEFORE.each do |method|
-            define_method(method) do |table_name, *args, **kwargs, &block|
-              @shadow&.call(table_name)
-              super(table_name, *args, **kwargs, &block)
+            define_method(method) do |*args, **kwargs, &block|
+              @shadow&.call(args.first)
+              super(*args, **kwargs, &block)
+            end
+          end
+
+          # Shadow each table so DROP resolves to the branch copy, then
+          # create a tombstone in the dropped schema to block fallthrough.
+          def drop_table(*table_names, **options)
+            if @branch_manager.primary_branch?
+              super
+            else
+              table_names.each { |t| @shadow&.call(t) }
+              super
+              table_names.each { |t| @shadow&.drop_table(t) }
+            end
+          end
+
+          # create_table after drop_table should work — remove the
+          # tombstone so the new table takes precedence.
+          def create_table(*args, **kwargs, &block)
+            @shadow&.undrop_table(args.first)
+            super
+          end
+
+          # Enum DDL resolves unqualified type names through search_path,
+          # so modifications on a feature branch would otherwise mutate
+          # public. Shadow the enum into the branch schema first.
+          %i[drop_enum rename_enum add_enum_value rename_enum_value].each do |method|
+            define_method(method) do |name, *args, **kwargs, &block|
+              @shadow&.shadow_enum(name)
+              super(name, *args, **kwargs, &block)
             end
           end
 
@@ -59,6 +93,10 @@ module ActiveRecord
           end
 
           attr_reader :branch_manager
+
+          def table_dropped_on_branch?(table_name)
+            @shadow&.dropped?(table_name) || false
+          end
         end
       end
     end

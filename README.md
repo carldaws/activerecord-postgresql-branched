@@ -54,14 +54,17 @@ When a migration modifies a table that exists in `public` but not yet in the bra
 ```
 add_column :users, :bio, :string
 
-1. CREATE TABLE branch_feature_payments.users (LIKE public.users INCLUDING ALL)
+1. CREATE TABLE branch_feature_payments.users (LIKE public.users ...)
 2. INSERT INTO branch_feature_payments.users SELECT * FROM public.users
-3. ALTER TABLE users ADD COLUMN bio VARCHAR
+3. Rebuild indexes, foreign keys, exclusion and unique constraints
+4. ALTER TABLE users ADD COLUMN bio VARCHAR
 ```
 
-The public table is never touched. Step 3 operates on the shadow because `search_path` resolves `users` to the branch schema first.
+The public table is never touched. Step 4 operates on the shadow because `search_path` resolves `users` to the branch schema first.
 
-This applies to any DDL that modifies an existing table: `add_column`, `remove_column`, `add_index`, `add_foreign_key`, `drop_table`, and so on.
+The adapter intercepts every `SchemaStatements` method that takes a table name — column DDL, index DDL, constraint DDL, `drop_table`, `change_table`, timestamps, references, and so on. Enum type DDL (`drop_enum`, `rename_enum`, `add_enum_value`, `rename_enum_value`) is also intercepted so enum modifications stay on the branch.
+
+When you `drop_table` on a branch, a lightweight tombstone is created in a separate schema to block `search_path` fallthrough to public. The public table is untouched and the schema dumper excludes it.
 
 ### schema.rb stays clean
 
@@ -155,5 +158,6 @@ All standard PostgreSQL connection parameters work as normal (`host`, `port`, `u
 
 - **Rails + PostgreSQL only** — uses PostgreSQL schemas and `search_path`
 - **Development and test only** — production should use the standard `postgresql` adapter
-- **Non-ActiveRecord DDL** — raw SQL outside of migrations bypasses the shadow rule
-- **Sequences on shadowed tables** — `rename_table` on a shadowed table with serial columns works, but the sequence keeps its original name
+- **Raw SQL DDL** — `execute("CREATE TRIGGER ...")` and similar raw SQL bypasses the shadow rule. If another intercepted DDL method has already shadowed the table in the same migration, the raw SQL will land on the branch copy via `search_path`. If the raw SQL is the first thing touching that table, it will hit `public`. Structure your migration so that an intercepted method (e.g. `add_column`) runs first, or use `db:branch:reset && db:migrate` to rebuild the branch from scratch.
+- **Sequences on shadowed tables** — `rename_table` on a shadowed table with serial columns works, but the sequence keeps its original name since renaming it would affect all branches
+- **Concurrent shadow creation** — if parallel workers (parallel tests, multiple consoles) shadow the same table simultaneously, a race condition can cause duplicate data or a `DuplicateTable` error. Restart the workers or run `db:branch:reset` to recover

@@ -53,7 +53,7 @@ class AdapterTest < Minitest::Test
   def test_feature_branch_sets_search_path
     conn = connect(branch: "feature/payments")
     search_path = conn.select_value("SHOW search_path")
-    assert_equal "branch_feature_payments, public", search_path
+    assert_equal "branch_feature_payments__dropped, branch_feature_payments, public", search_path
   end
 
   def test_feature_branch_table_takes_precedence_over_public
