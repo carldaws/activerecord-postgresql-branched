@@ -484,8 +484,6 @@ class DdlCoverageTest < Minitest::Test
 
   # --- Meta: ensure every DDL method has a test ---
 
-  TABLE_PARAMS = %i[table_name from_table table_1].freeze
-
   # Methods that don't need their own test — either aliases of tested
   # methods, internal helpers, or read-only queries.
   SKIP_COVERAGE = %i[
@@ -510,7 +508,7 @@ class DdlCoverageTest < Minitest::Test
 
   def test_every_ddl_method_has_coverage
     test_names = self.class.instance_methods(false).grep(/\Atest_/).map(&:to_s)
-    untested = table_methods - SKIP_COVERAGE
+    untested = ActiveRecord::ConnectionAdapters::PostgreSQL::Branched.table_methods - SKIP_COVERAGE
 
     untested.reject! do |method|
       test_names.any? { |t| t == "test_#{method}" || t.start_with?("test_#{method}_") }
@@ -522,18 +520,6 @@ class DdlCoverageTest < Minitest::Test
   end
 
   private
-
-  def table_methods
-    [
-      ActiveRecord::ConnectionAdapters::SchemaStatements,
-      ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaStatements
-    ].flat_map { |mod|
-      mod.instance_methods(false).select { |m|
-        first_param = mod.instance_method(m).parameters.first
-        first_param && TABLE_PARAMS.include?(first_param.last)
-      }
-    }.uniq
-  end
 
   def foreign_key_exists_on_branch?(conn, schema, from_table, to_table)
     conn.select_value(<<~SQL) == 1

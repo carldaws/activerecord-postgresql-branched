@@ -2,31 +2,36 @@ module ActiveRecord
   module ConnectionAdapters
     module PostgreSQL
       module Branched
+        TABLE_PARAMS = %i[table_name from_table table_1].freeze
+
+        # All SchemaStatements methods whose first parameter is a table name.
+        def self.table_methods
+          [
+            ActiveRecord::ConnectionAdapters::SchemaStatements,
+            ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaStatements
+          ].flat_map { |mod|
+            mod.instance_methods(false).select { |m|
+              first_param = mod.instance_method(m).parameters.first
+              first_param && TABLE_PARAMS.include?(first_param.last)
+            }
+          }.uniq
+        end
+
         class Adapter < ActiveRecord::ConnectionAdapters::PostgreSQLAdapter
           ADAPTER_NAME = "PostgreSQL Branched"
 
-          SHADOW_BEFORE = %i[
-            add_column
-            remove_column
-            rename_column
-            change_column
-            change_column_default
-            change_column_null
-            change_column_comment
-            change_table_comment
-            add_index
-            remove_index
-            rename_index
-            add_foreign_key
-            remove_foreign_key
-            add_check_constraint
-            remove_check_constraint
-            validate_foreign_key
-            validate_check_constraint
-            drop_table
-            change_table
-            bulk_change_table
-          ].freeze
+          # Methods where the first argument is not the table to shadow,
+          # or where shadowing would be wasteful (join table methods pass
+          # table_1, not the derived join table name).
+          SHADOW_SKIP = %i[create_join_table drop_join_table].freeze
+
+          # Methods with custom shadow handling outside the generic loop.
+          SHADOW_HANDLED = %i[rename_table].freeze
+
+          # Intercept everything except SHADOW_SKIP and SHADOW_HANDLED.
+          # Shadow#call is idempotent and safe — if the table doesn't
+          # exist in public or is already shadowed, it's a no-op.
+          SHADOW_BEFORE = Branched.table_methods.-(SHADOW_SKIP).-(SHADOW_HANDLED).freeze
 
           def initialize(...)
             super
