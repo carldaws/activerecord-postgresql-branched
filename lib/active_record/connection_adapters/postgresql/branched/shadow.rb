@@ -40,6 +40,7 @@ module ActiveRecord
             clone_structure(quoted_branch, quoted_table)
             copy_data(quoted_branch, quoted_table)
             clone_indexes(table, quoted_branch, quoted_table)
+            clone_constraints(table, quoted_branch, quoted_table)
           end
 
           # Per-row index maintenance during INSERT SELECT dominates the cost
@@ -76,10 +77,11 @@ module ActiveRecord
             end
           end
 
-          # Redirect pg_get_indexdef output from public to the branch schema.
-          # The REPLACE uses the same quote_ident() that pg_get_indexdef uses
-          # to emit identifiers, so the anchor always matches regardless of
-          # whether the table name needs quoting.
+          # LIKE ... INCLUDING ALL EXCLUDING INDEXES drops all index-backed
+          # constraints (PK, unique, exclusion). clone_constraints re-emits
+          # unique and exclusion constraints which implicitly create their
+          # backing indexes, so we skip those here to avoid name collisions.
+          # PK indexes are rebuilt and reattached via USING INDEX.
           def index_metadata(table)
             @connection.select_rows(<<~SQL)
               SELECT i.relname, ix.indisprimary,
@@ -94,6 +96,40 @@ module ActiveRecord
                 JOIN pg_namespace n ON n.oid = t.relnamespace
               WHERE n.nspname = 'public'
                 AND t.relname = #{@connection.quote(table)}
+                AND NOT EXISTS (
+                  SELECT 1 FROM pg_constraint c
+                  WHERE c.conindid = ix.indexrelid
+                    AND c.contype IN ('x', 'u')
+                )
+            SQL
+          end
+
+          # LIKE ... INCLUDING CONSTRAINTS copies check constraints and NOT
+          # NULL but never foreign keys (Postgres design). EXCLUDING INDEXES
+          # also drops exclusion and unique constraints since they're index-
+          # backed. Re-emit each from pg_constraint; the definitions from
+          # pg_get_constraintdef are self-contained and resolve correctly
+          # via the branch search_path without rewriting.
+          def clone_constraints(table, quoted_branch, quoted_table)
+            constraint_definitions(table).each do |conname, condef|
+              quoted_con = @connection.quote_column_name(conname)
+              @connection.execute(<<~SQL)
+                ALTER TABLE #{quoted_branch}.#{quoted_table}
+                  ADD CONSTRAINT #{quoted_con} #{condef}
+              SQL
+            end
+          end
+
+          def constraint_definitions(table)
+            @connection.select_rows(<<~SQL)
+              SELECT c.conname, pg_get_constraintdef(c.oid, true)
+              FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+              WHERE n.nspname = 'public'
+                AND t.relname = #{@connection.quote(table)}
+                AND c.contype IN ('f', 'x', 'u')
+              ORDER BY c.conname
             SQL
           end
         end

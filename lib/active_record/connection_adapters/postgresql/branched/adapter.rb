@@ -2,9 +2,9 @@ module ActiveRecord
   module ConnectionAdapters
     module PostgreSQL
       module Branched
-        TABLE_PARAMS = %i[table_name from_table table_1].freeze
-
-        # All SchemaStatements methods whose first parameter is a table name.
+        # All SchemaStatements methods whose first parameter name
+        # contains "table" — covers table_name, from_table, table_1,
+        # table_names, and any future variant.
         def self.table_methods
           [
             ActiveRecord::ConnectionAdapters::SchemaStatements,
@@ -12,7 +12,7 @@ module ActiveRecord
           ].flat_map { |mod|
             mod.instance_methods(false).select { |m|
               first_param = mod.instance_method(m).parameters.first
-              first_param && TABLE_PARAMS.include?(first_param.last)
+              first_param && first_param.last.to_s.include?("table")
             }
           }.uniq
         end
@@ -28,9 +28,9 @@ module ActiveRecord
           # Methods with custom shadow handling outside the generic loop.
           SHADOW_HANDLED = %i[rename_table].freeze
 
-          # Intercept everything except SHADOW_SKIP and SHADOW_HANDLED.
-          # Shadow#call is idempotent and safe — if the table doesn't
-          # exist in public or is already shadowed, it's a no-op.
+          # Everything else with a table param gets the generic wrapper.
+          # Shadow#call is idempotent — if the table doesn't exist in
+          # public or is already shadowed, it's a no-op.
           SHADOW_BEFORE = Branched.table_methods.-(SHADOW_SKIP).-(SHADOW_HANDLED).freeze
 
           def initialize(...)
@@ -45,9 +45,9 @@ module ActiveRecord
           end
 
           SHADOW_BEFORE.each do |method|
-            define_method(method) do |table_name, *args, **kwargs, &block|
-              @shadow&.call(table_name)
-              super(table_name, *args, **kwargs, &block)
+            define_method(method) do |*args, **kwargs, &block|
+              @shadow&.call(args.first)
+              super(*args, **kwargs, &block)
             end
           end
 
