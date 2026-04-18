@@ -16,7 +16,7 @@ Gem::Specification.new do |spec|
   spec.files = Dir["lib/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
   spec.require_paths = ["lib"]
 
-  spec.add_dependency "activerecord", ">= 7.1"
-  spec.add_dependency "railties", ">= 7.1"
+  spec.add_dependency "activerecord", ">= 7.2"
+  spec.add_dependency "railties", ">= 7.2"
   spec.add_dependency "pg"
 end

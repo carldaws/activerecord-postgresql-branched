@@ -26,7 +26,7 @@ module ActiveRecord
           SHADOW_SKIP = %i[create_join_table drop_join_table].freeze
 
           # Methods with custom shadow handling outside the generic loop.
-          SHADOW_HANDLED = %i[rename_table].freeze
+          SHADOW_HANDLED = %i[rename_table drop_table create_table].freeze
 
           # Everything else with a table param gets the generic wrapper.
           # Shadow#call is idempotent — if the table doesn't exist in

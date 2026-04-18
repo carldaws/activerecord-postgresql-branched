@@ -10,9 +10,30 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    strategy:
+      fail-fast: false
+      matrix:
+        rails-version: ["7.2", "8.0", "8.1"]
+        ruby-version: ["4.0"]
+        postgres-version: ["16"]
+        include:
+          # Edge Rails
+          - rails-version: edge
+            ruby-version: "4.0"
+            postgres-version: "16"
+            allow-failure: true
+          # Oldest supported combo
+          - rails-version: "7.2"
+            ruby-version: "3.1"
+            postgres-version: "14"
+          # Latest everything
+          - rails-version: "8.1"
+            ruby-version: "4.0"
+            postgres-version: "18"
+
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres-version }}
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -27,13 +48,17 @@ jobs:
       PGHOST: localhost
       PGUSER: postgres
       PGPASSWORD: postgres
+      RAILS_VERSION: ${{ matrix.rails-version }}
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: ruby/setup-ruby@v1
         with:
-          ruby-version: "3.3"
-          bundler-cache: true
+          ruby-version: ${{ matrix.ruby-version }}
+
+      - run: rm -f Gemfile.lock && bundle install
 
       - run: bundle exec rake test
+
+    continue-on-error: ${{ matrix.allow-failure || false }}
