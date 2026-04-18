@@ -302,6 +302,8 @@ class DdlCoverageTest < Minitest::Test
   # --- Generic constraint DDL ---
 
   def test_validate_constraint
+    skip "Added in Rails 8.1" unless ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.method_defined?(:validate_constraint)
+
     conn = connect(branch: "main")
     conn.add_check_constraint :orders, "amount > 0", name: "orders_amount_positive", validate: false
 
@@ -313,6 +315,8 @@ class DdlCoverageTest < Minitest::Test
   end
 
   def test_remove_constraint
+    skip "Added in Rails 8.1" unless ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.method_defined?(:remove_constraint)
+
     conn = connect(branch: "main")
     conn.add_check_constraint :orders, "amount > 0", name: "orders_amount_positive"
 
@@ -544,7 +548,7 @@ class DdlCoverageTest < Minitest::Test
     conn.create_enum :status, %w[draft published]
 
     conn = reconnect(branch: "feature/ren-enum")
-    conn.rename_enum :status, :article_status
+    conn.rename_enum :status, to: :article_status
 
     assert enum_exists_in_schema?(conn, "branch_feature_ren_enum", "article_status")
     assert enum_exists_in_schema?(conn, "public", "status"),

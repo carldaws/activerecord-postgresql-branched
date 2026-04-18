@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rails-version: ["7.1", "7.2", "8.0", "8.1"]
+        rails-version: ["7.2", "8.0", "8.1"]
         ruby-version: ["4.0"]
         postgres-version: ["16"]
         include:
@@ -23,7 +23,7 @@ jobs:
             postgres-version: "16"
             allow-failure: true
           # Oldest supported combo
-          - rails-version: "7.1"
+          - rails-version: "7.2"
             ruby-version: "3.1"
             postgres-version: "14"
           # Latest everything
