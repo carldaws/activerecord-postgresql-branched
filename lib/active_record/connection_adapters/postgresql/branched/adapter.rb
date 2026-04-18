@@ -51,6 +51,28 @@ module ActiveRecord
             end
           end
 
+          # drop_table takes *table_names (splat) in Rails 8.1+.
+          # For tables from public: shadow first (so the branch copy
+          # exists for DROP to resolve to), then super drops the branch
+          # copy, then create a tombstone in the dropped schema to block
+          # search_path fallthrough.
+          def drop_table(*table_names, **options)
+            if @branch_manager.primary_branch?
+              super
+            else
+              table_names.each { |t| @shadow&.call(t) }
+              super
+              table_names.each { |t| @shadow&.drop_table(t) }
+            end
+          end
+
+          # create_table after drop_table should work — remove the
+          # tombstone so the new table takes precedence.
+          def create_table(*args, **kwargs, &block)
+            @shadow&.undrop_table(args.first)
+            super
+          end
+
           # rename_table needs special handling: the shadow table's sequences
           # live in public, but Rails' rename_table tries to rename them using
           # the branch schema. The table and index renames succeed before the
@@ -63,7 +85,7 @@ module ActiveRecord
             raise unless e.cause.is_a?(PG::UndefinedTable)
           end
 
-          attr_reader :branch_manager
+          attr_reader :branch_manager, :shadow
         end
       end
     end

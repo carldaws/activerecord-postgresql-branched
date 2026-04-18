@@ -6,17 +6,54 @@ module ActiveRecord
           def initialize(connection, branch_schema)
             @connection = connection
             @branch_schema = branch_schema
+            @dropped_schema = "#{branch_schema}__dropped"
           end
+
+          attr_reader :dropped_schema
 
           def call(table_name)
             table = table_name.to_s
             return unless exists_in_public?(table)
             return if already_shadowed?(table)
+            return if dropped?(table)
 
             create_shadow(table)
           end
 
+          def drop_table(table)
+            table = table.to_s
+            return unless exists_in_public?(table)
+
+            ensure_dropped_schema
+            quoted_dropped = @connection.quote_column_name(@dropped_schema)
+            quoted_table = @connection.quote_column_name(table)
+            @connection.execute(<<~SQL)
+              CREATE TABLE #{quoted_dropped}.#{quoted_table}
+                (LIKE public.#{quoted_table})
+            SQL
+          end
+
+          def undrop_table(table)
+            return unless dropped?(table)
+            quoted_dropped = @connection.quote_column_name(@dropped_schema)
+            quoted_table = @connection.quote_column_name(table)
+            @connection.execute("DROP TABLE #{quoted_dropped}.#{quoted_table}")
+          end
+
+          def dropped?(table_name)
+            @connection.select_value(<<~SQL) == 1
+              SELECT 1 FROM information_schema.tables
+              WHERE table_schema = #{@connection.quote(@dropped_schema)}
+                AND table_name = #{@connection.quote(table_name.to_s)}
+            SQL
+          end
+
           private
+
+          def ensure_dropped_schema
+            quoted = @connection.quote_column_name(@dropped_schema)
+            @connection.execute("CREATE SCHEMA IF NOT EXISTS #{quoted}")
+          end
 
           def exists_in_public?(table)
             @connection.select_value(<<~SQL) == 1

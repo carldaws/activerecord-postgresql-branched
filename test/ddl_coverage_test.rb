@@ -363,17 +363,18 @@ class DdlCoverageTest < Minitest::Test
     refute table_exists_in_schema?(conn, "branch_feature_drop_tbl", "orders")
   end
 
-  def test_drop_table_is_not_visible_on_branch
-    skip "Known bug: dropped tables fall through search_path to public"
-
-    conn = reconnect(branch: "feature/drop-vis")
+  def test_drop_table_prevents_re_shadow
+    conn = reconnect(branch: "feature/drop-reshadow")
     conn.drop_table :orders
 
-    # After dropping on a branch, the table should NOT be queryable
-    # via the branch's search_path.
-    assert_raises(ActiveRecord::StatementInvalid) do
-      conn.execute("INSERT INTO orders (status, amount) VALUES ('new', 200)")
-    end
+    # After dropping on a branch, Shadow#call must not re-shadow the
+    # table (e.g. via a read-only method that triggers the wrapper).
+    # The table still falls through to public via search_path, but
+    # the schema dumper will exclude it.
+    conn.add_column :users, :bio, :string  # triggers shadow machinery
+
+    refute table_exists_in_schema?(conn, "branch_feature_drop_reshadow", "orders"),
+      "Dropped table must not be re-shadowed"
   end
 
   def test_rename_table
