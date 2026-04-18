@@ -604,7 +604,7 @@ class DdlCoverageTest < Minitest::Test
     index_exists? index_name index_name_exists? indexes
     inherited_table_names
     pk_and_sequence_for primary_key primary_keys
-    reset_pk_sequence! serial_sequence set_pk_sequence!
+    reset_column_sequences! reset_pk_sequence! serial_sequence set_pk_sequence!
     table_alias_for table_comment table_exists? table_options table_partition_definition
     unique_constraint_options unique_constraints
     update_table_definition
