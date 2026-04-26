@@ -11,6 +11,7 @@ ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaDumper.prepend(
 module PGBTestSupport
   def setup_test_database
     conn = PG.connect(dbname: "postgres")
+    conn.exec("SET client_min_messages TO WARNING")
     conn.exec("DROP DATABASE IF EXISTS #{DATABASE_NAME}")
     conn.exec("CREATE DATABASE #{DATABASE_NAME}")
     conn.close
@@ -19,6 +20,7 @@ module PGBTestSupport
   def teardown_test_database
     ActiveRecord::Base.connection_pool.disconnect!
     conn = PG.connect(dbname: "postgres")
+    conn.exec("SET client_min_messages TO WARNING")
     conn.exec("DROP DATABASE IF EXISTS #{DATABASE_NAME}")
     conn.close
     ENV.delete("PGBRANCH")
